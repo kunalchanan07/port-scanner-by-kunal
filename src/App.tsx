@@ -60,32 +60,73 @@ function cleanClientTarget(input: string): { cleanHost: string; detectedPort?: n
   return { cleanHost: val, detectedPort };
 }
 
-// Safe API caller that guarantees JSON parsing and prevents HTML or 404 crashes
+// Single Backend API URL variable (VITE_API_BASE_URL)
+// Defaults to empty string so it works immediately without environment variables
+export const BACKEND_URL = (
+  (import.meta.env.VITE_API_BASE_URL as string | undefined) || ''
+).replace(/\/+$/, '');
+
+export function getApiEndpoint(path: string): string {
+  const normalizedPath = path.startsWith('/') ? path : `/${path}`;
+  return BACKEND_URL ? `${BACKEND_URL}${normalizedPath}` : normalizedPath;
+}
+
+// Safe API caller using fetch() that validates JSON, handles timeouts, and gives clear diagnostic errors
 async function safeApiPost<T = any>(
-  url: string,
-  body: any
-): Promise<{ ok: boolean; data?: T; error?: string }> {
+  endpointPath: string,
+  body: any,
+  signal?: AbortSignal
+): Promise<{ ok: boolean; data?: T; error?: string; status?: number }> {
+  const fullUrl = getApiEndpoint(endpointPath);
   try {
-    const res = await fetch(url, {
+    const res = await fetch(fullUrl, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+      },
       body: JSON.stringify(body),
+      signal,
     });
 
     const contentType = res.headers.get('content-type') || '';
     if (!contentType.includes('application/json')) {
+      // Diagnostic explanation if static host (Netlify) served index.html instead of the Python backend
+      const isNetlifyFallback = !BACKEND_URL;
+      const errorMsg = isNetlifyFallback
+        ? 'Scan failed: Netlify is returning HTML because no Python backend is configured. To fix this, deploy the included FastAPI backend (main.py) to Render/Railway and set VITE_API_BASE_URL in your Netlify site settings.'
+        : `Scan failed: The backend at ${BACKEND_URL} returned non-JSON (${res.status} ${res.statusText}). Verify the FastAPI backend is running and CORS is enabled.`;
+
       return {
         ok: false,
-        error: `Connected to host`,
+        status: res.status,
+        error: errorMsg,
       };
     }
 
     const data = await res.json();
-    return { ok: true, data };
+    if (!res.ok) {
+      return {
+        ok: false,
+        status: res.status,
+        error: data.error || data.detail || `Server returned error (${res.status})`,
+      };
+    }
+
+    return { ok: true, status: res.status, data };
   } catch (err: any) {
+    if (err.name === 'AbortError') {
+      return {
+        ok: false,
+        error: 'Scan was stopped or request timed out.',
+      };
+    }
+    const hint = BACKEND_URL
+      ? `Could not reach Python backend at ${BACKEND_URL}. Check if your backend is online and accessible.`
+      : 'Could not reach backend. On Netlify, configure VITE_API_BASE_URL in site settings with your deployed FastAPI service URL.';
     return {
       ok: false,
-      error: err?.message || 'Connection proceeding',
+      error: `${err?.message || 'Network connection failed'}. ${hint}`,
     };
   }
 }
@@ -136,7 +177,7 @@ export function App() {
   const [isPythonModalOpen, setIsPythonModalOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<'both' | 'table' | 'terminal'>('both');
 
-  const sseRef = useRef<EventSource | null>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
   const isScanFinishedRef = useRef(false);
   const resultsCountRef = useRef(0);
   const t = TRANSLATIONS[currentLang];
@@ -166,7 +207,7 @@ export function App() {
     setIsDetectingIp(true);
     setErrorMessage(null);
     try {
-      const res = await fetch('/api/my-ip');
+      const res = await fetch(getApiEndpoint('/api/my-ip'));
       const contentType = res.headers.get('content-type') || '';
       if (contentType.includes('application/json')) {
         const data = await res.json();
@@ -195,7 +236,7 @@ export function App() {
     }
   };
 
-  // Start Scanning Execution
+  // Start Scanning Execution via fetch() (Requirement 6, 7 & 8)
   const handleStartScan = async () => {
     if (!host.trim()) {
       setErrorMessage(t.invalidHost);
@@ -219,6 +260,9 @@ export function App() {
       setIsScanning(false);
       return;
     }
+
+    const abortController = new AbortController();
+    abortControllerRef.current = abortController;
 
     setResults([]);
     addLog('========================================', 'header', false);
@@ -253,9 +297,15 @@ export function App() {
       addLog(`[Auto-detect] Added port ${clientTarget.detectedPort} from URL`, 'info');
     }
 
-    // Resolve DNS / Validate IP (supports URLs like https://google.com, http://..., google.com)
+    // Step 1: Resolve DNS / Validate Target Authorization via fetch()
     try {
-      const resolveResult = await safeApiPost('/api/resolve-target', { target: host });
+      addLog(`[DNS] Resolving target ${host}...`, 'info');
+      const resolveResult = await safeApiPost(
+        '/api/resolve-target',
+        { target: host },
+        abortController.signal
+      );
+
       if (resolveResult.ok && resolveResult.data) {
         const resolveData = resolveResult.data;
         if (resolveData.valid === false && resolveData.error) {
@@ -280,156 +330,100 @@ export function App() {
             'info'
           );
         }
-      } else {
-        addLog(
-          currentLang === 'pa'
-            ? `ਟਾਰਗਿਟ: ${targetToScan}`
-            : `Target: ${targetToScan}`,
-          'info'
-        );
       }
-    } catch {
-      addLog(
-        currentLang === 'pa'
-          ? `[DNS] ${targetToScan} ਨਾਲ ਸਕੈਨਿੰਗ ਜਾਰੀ`
-          : `[DNS] Continuing scan on ${targetToScan}`,
-        'info'
-      );
+    } catch (err: any) {
+      if (err.name === 'AbortError') return;
+      addLog(`[DNS] Continuing scan with ${targetToScan}`, 'info');
     }
+
+    if (abortController.signal.aborted) return;
 
     addLog(
       currentLang === 'pa'
-        ? `\nਸਕੈਨਿੰਗ ਸ਼ੁਰੂ ਹੋ ਰਹੀ ਹੈ: ${targetToScan}...\n`
-        : `\nScanning target: ${targetToScan}...\n`,
+        ? `\nਸਕੈਨਿੰਗ ਸ਼ੁਰੂ ਹੋ ਰਹੀ ਹੈ: ${targetToScan} (Python TCP socket)...\n`
+        : `\nScanning target: ${targetToScan} using Python TCP sockets...\n`,
       'info',
       false
     );
 
-    const timeoutMs = Math.round(timeoutSec * 1000);
-    const sseUrl = `/api/scan-stream?host=${encodeURIComponent(
-      targetToScan
-    )}&ports=${encodeURIComponent(cleanPorts.join(','))}&timeout=${timeoutMs}`;
-
-    if (sseRef.current) {
-      sseRef.current.close();
-    }
-
-    const eventSource = new EventSource(sseUrl);
-    sseRef.current = eventSource;
-
-    eventSource.onmessage = (event) => {
-      try {
-        const data = JSON.parse(event.data);
-
-        if (data.type === 'error') {
-          addLog(`[Scan Notice] ${data.error}`, 'error');
-          setErrorMessage(data.error);
-          eventSource.close();
-          sseRef.current = null;
-          setIsScanning(false);
-          return;
-        }
-
-        if (data.type === 'result' && data.result) {
-          const resItem: ScanResultItem = data.result;
-          resultsCountRef.current += 1;
-          setResults((prev) => [...prev, resItem]);
-
-          if (resItem.status === 'OPEN') {
-            addLog(
-              `[OPEN] Port ${resItem.port} (${resItem.service?.name || 'TCP'}) - ${resItem.latencyMs}ms`,
-              'open'
-            );
-          } else if (resItem.status === 'FILTERED') {
-            addLog(
-              `[CLOSED/FILTERED] Port ${resItem.port} (Timeout/Filtered)`,
-              'filtered'
-            );
-          } else {
-            addLog(
-              `[CLOSED] Port ${resItem.port} (${resItem.service?.name || 'TCP'})`,
-              'closed'
-            );
-          }
-        } else if (data.type === 'complete') {
-          isScanFinishedRef.current = true;
-          addLog(
-            `\n===== ${currentLang === 'pa' ? 'ਸਕੈਨ ਮੁਕੰਮਲ ਹੋ ਗਿਆ' : 'SCAN COMPLETE'} =====`,
-            'header',
-            false
-          );
-          eventSource.close();
-          sseRef.current = null;
-          setIsScanning(false);
-        }
-      } catch (err) {
-        console.error('SSE parse error:', err);
-      }
-    };
-
-    eventSource.onerror = async () => {
-      eventSource.close();
-      sseRef.current = null;
-
-      // If scan already completed or we already collected ports via SSE, exit cleanly
-      if (isScanFinishedRef.current || resultsCountRef.current > 0) {
-        setIsScanning(false);
-        return;
-      }
-
-      // If SSE stream failed upfront (e.g., browser proxy/CORS buffer drop), smoothly fallback to batch socket scan
-      addLog(
-        currentLang === 'pa'
-          ? 'ਬੈਚ ਮੋਡ ਵਿੱਚ ਸਾਕਟ ਸਕੈਨਿੰਗ ਹੋ ਰਹੀ ਹੈ...'
-          : 'Connecting via socket batch scan...',
-        'info'
-      );
-
-      const batchResult = await safeApiPost('/api/scan', {
+    // Step 2: Execute TCP Port Scan via fetch() (Requirement 6, 7 & 8)
+    const scanResponse = await safeApiPost<{
+      host: string;
+      resolvedIp?: string;
+      scannedCount: number;
+      openCount: number;
+      closedCount: number;
+      filteredCount: number;
+      results: ScanResultItem[];
+      error?: string;
+    }>(
+      '/api/scan',
+      {
         host: targetToScan,
         ports: cleanPorts,
-        timeout: timeoutMs,
+        timeout: timeoutSec,
+      },
+      abortController.signal
+    );
+
+    if (abortController.signal.aborted) return;
+
+    if (!scanResponse.ok || scanResponse.error) {
+      const errMsg = scanResponse.error || 'Scan failed';
+      addLog(`[Scan Error] ${errMsg}`, 'error');
+      setErrorMessage(errMsg);
+      setIsScanning(false);
+      return;
+    }
+
+    const scanData = scanResponse.data;
+    if (scanData?.error) {
+      addLog(`[Scan Error] ${scanData.error}`, 'error');
+      setErrorMessage(scanData.error);
+      setIsScanning(false);
+      return;
+    }
+
+    if (scanData && Array.isArray(scanData.results)) {
+      setResults(scanData.results);
+      resultsCountRef.current = scanData.results.length;
+
+      scanData.results.forEach((r) => {
+        if (r.status === 'OPEN') {
+          addLog(
+            `[OPEN] Port ${r.port} (${r.service?.name || 'TCP'}) - ${r.latencyMs}ms`,
+            'open'
+          );
+        } else if (r.status === 'FILTERED') {
+          addLog(
+            `[CLOSED/FILTERED] Port ${r.port} (${r.service?.name || 'TCP'}) - ${r.error || 'Timed out / Filtered'}`,
+            'filtered'
+          );
+        } else {
+          addLog(
+            `[CLOSED] Port ${r.port} (${r.service?.name || 'TCP'}) - ${r.error || 'Connection refused (RST)'}`,
+            'closed'
+          );
+        }
       });
 
-      if (batchResult.ok && batchResult.data?.error) {
-        addLog(`[Scan Error] ${batchResult.data.error}`, 'error');
-        setErrorMessage(batchResult.data.error);
-      } else if (batchResult.ok && batchResult.data?.results) {
-        const batchData = batchResult.data;
-        setResults(batchData.results);
-        batchData.results.forEach((r: ScanResultItem) => {
-          if (r.status === 'OPEN') {
-            addLog(
-              `[OPEN] Port ${r.port} (${r.service?.name || 'TCP'}) - ${r.latencyMs}ms`,
-              'open'
-            );
-          } else {
-            addLog(`[CLOSED/FILTERED] Port ${r.port}`, 'closed');
-          }
-        });
-        addLog(
-          `\n===== ${currentLang === 'pa' ? 'ਸਕੈਨ ਮੁਕੰਮਲ' : 'SCAN COMPLETE'} =====`,
-          'header',
-          false
-        );
-      } else {
-        addLog(
-          currentLang === 'pa'
-            ? `ਸਕੈਨ ਅਸਫਲ: ${batchResult.error || 'ਕਨੈਕਸ਼ਨ ਅਸਮਰੱਥ'}`
-            : `Scan failed: ${batchResult.error || 'Connection failed'}`,
-          'error'
-        );
-      }
-      setIsScanning(false);
-    };
+      addLog(
+        `\n===== ${currentLang === 'pa' ? 'ਸਕੈਨ ਮੁਕੰਮਲ' : 'SCAN COMPLETE'} (${scanData.openCount} open, ${scanData.closedCount} closed, ${scanData.filteredCount} filtered) =====`,
+        'header',
+        false
+      );
+    } else {
+      addLog('Scan returned no results from backend.', 'error');
+    }
+
+    setIsScanning(false);
   };
 
   // Stop current scan
   const handleStopScan = () => {
     isScanFinishedRef.current = true;
-    if (sseRef.current) {
-      sseRef.current.close();
-      sseRef.current = null;
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
     }
     setIsScanning(false);
     addLog(
@@ -444,9 +438,8 @@ export function App() {
   const handleClear = () => {
     isScanFinishedRef.current = true;
     resultsCountRef.current = 0;
-    if (sseRef.current) {
-      sseRef.current.close();
-      sseRef.current = null;
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
     }
     setIsScanning(false);
     setResults([]);

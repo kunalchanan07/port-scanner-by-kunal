@@ -1,9 +1,8 @@
-# Port Scanner by Kunal - Python Backend Dependencies
-# Note: The core scanner (scanner.py) utilizes the standard Python 3 library
-# (socket, json, sys, time, ipaddress, concurrent.futures, http.server).
-# The packages below provide optional enhanced capabilities (e.g. Flask REST API, requests client testing).
+# Port Scanner by Kunal - FastAPI Backend Dependencies
+# To install: pip install -r requirements.txt
+# To run: uvicorn main:app --host 0.0.0.0 --port 8000
 
+fastapi>=0.110.0
+uvicorn[standard]>=0.28.0
+pydantic>=2.6.0
 requests>=2.31.0
-urllib3>=2.0.0
-flask>=3.0.0
-gunicorn>=21.2.0
