@@ -8,69 +8,126 @@ interface PythonScriptModalProps {
   currentLang: Language;
 }
 
-const PYTHON_SCRIPT_CODE = `import socket
-import ipaddress
+const PYTHON_SCRIPT_CODE = `#!/usr/bin/env python3
+"""
+Port Scanner by Kunal - TCP Socket Engine & Backend
+Provides TCP socket scanning, timeout management, target authorization,
+and JSON responses.
 
-def scan_port(host, port):
-    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    s.settimeout(1)
+How to install dependencies and run:
+  1. No external dependencies required! (Uses standard library: socket, time, json, ipaddress)
+  2. Optional dependencies: pip install -r requirements.txt
+  3. Run CLI Scan:
+     python3 scanner.py --host 127.0.0.1 --ports 80,443,3000 --timeout 1.0
+  4. Run Python HTTP API Server:
+     python3 app.py --port 5000
+"""
+
+import socket
+import sys
+import time
+import errno
+import json
+import argparse
+import ipaddress
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
+AUTHORIZED_HOSTS = {
+    "localhost", "127.0.0.1", "::1", "0.0.0.0",
+    "scanme.nmap.org", "google.com", "www.google.com",
+    "cloudflare.com", "1.1.1.1", "8.8.8.8", "github.com",
+}
+
+def is_target_authorized(host: str) -> tuple[bool, str]:
+    clean = host.lower().strip()
+    if clean in AUTHORIZED_HOSTS or clean.endswith(".google.com"):
+        return True, "Authorized target"
+    try:
+        ip = ipaddress.ip_address(clean)
+        if ip.is_loopback:
+            return True, "Authorized loopback address"
+        if ip.is_private:
+            return False, f"Scanning private network address {clean} is restricted. Use localhost/127.0.0.1."
+        return True, "Authorized public IP"
+    except ValueError:
+        if "." in clean and not clean.endswith(".local"):
+            return True, "Authorized domain"
+        return False, f"Target '{clean}' not authorized. Allowed: localhost, 127.0.0.1, scanme.nmap.org."
+
+def scan_single_port(host: str, port: int, timeout_sec: float = 1.0) -> dict:
+    is_auth, auth_msg = is_target_authorized(host)
+    if not is_auth:
+        return {"port": port, "status": "CLOSED", "latencyMs": 0, "error": auth_msg}
+
+    family = socket.AF_INET6 if ":" in host else socket.AF_INET
+    s = socket.socket(family, socket.SOCK_STREAM)
+    s.settimeout(timeout_sec)
+    start_time = time.time()
 
     try:
         result = s.connect_ex((host, port))
-
+        latency_ms = int((time.time() - start_time) * 1000)
         if result == 0:
-            print(f"[OPEN] Port {port}")
+            status = "OPEN"
+            error = None
+        elif result in (errno.ECONNREFUSED, 111):
+            status = "CLOSED"
+            error = "Connection refused (RST received)"
+        elif result in (errno.ETIMEDOUT, 110):
+            status = "FILTERED"
+            error = "Connection timed out"
         else:
-            print(f"[CLOSED/FILTERED] Port {port}")
-
-    except socket.gaierror:
-        print("Invalid hostname")
-
-    except OSError as e:
-        print(f"Error on port {port}: {e}")
-
+            status = "CLOSED"
+            error = f"Socket code {result}"
+    except socket.timeout:
+        latency_ms = int((time.time() - start_time) * 1000)
+        status = "FILTERED"
+        error = "Timeout"
+    except Exception as e:
+        latency_ms = 0
+        status = "CLOSED"
+        error = str(e)
     finally:
         s.close()
 
+    return {
+        "port": port,
+        "status": status,
+        "latencyMs": latency_ms,
+        "error": error,
+    }
 
-def main():
-    print("===== BASIC PORT SCANNER =====")
+def scan_ports(host: str, ports: list[int], timeout_sec: float = 1.0) -> dict:
+    is_auth, auth_msg = is_target_authorized(host)
+    if not is_auth:
+        return {"host": host, "scannedCount": 0, "results": [], "error": auth_msg}
 
-    host = input("Enter target IP address: ").strip()
+    results = []
+    with ThreadPoolExecutor(max_workers=20) as executor:
+        future_map = {executor.submit(scan_single_port, host, p, timeout_sec): p for p in ports}
+        for future in as_completed(future_map):
+            results.append(future.result())
 
-    try:
-        ipaddress.ip_address(host)
-    except ValueError:
-        print("Please enter a valid IP address.")
-        return
-
-    ports_input = input(
-        "Enter ports separated by commas (example: 22,80,443): "
-    )
-
-    try:
-        ports = list(dict.fromkeys(
-            int(p.strip()) for p in ports_input.split(",")
-        ))
-
-        if not ports or any(p < 1 or p > 65535 for p in ports):
-            print("Ports must be between 1 and 65535.")
-            return
-
-    except ValueError:
-        print("Enter valid port numbers separated by commas.")
-        return
-
-    print(f"\\nScanning {host}...\\n")
-
-    for port in ports:
-        scan_port(host, port)
-
-    print("\\n===== SCAN COMPLETE =====")
-
+    results.sort(key=lambda r: r["port"])
+    return {
+        "host": host,
+        "scannedCount": len(results),
+        "openCount": sum(1 for r in results if r["status"] == "OPEN"),
+        "closedCount": sum(1 for r in results if r["status"] == "CLOSED"),
+        "filteredCount": sum(1 for r in results if r["status"] == "FILTERED"),
+        "results": results,
+    }
 
 if __name__ == "__main__":
-    main()`;
+    parser = argparse.ArgumentParser(description="Port Scanner by Kunal")
+    parser.add_argument("--host", default="127.0.0.1", help="Target host/IP")
+    parser.add_argument("--ports", default="80,443,3000", help="Comma-separated ports")
+    parser.add_argument("--timeout", type=float, default=1.0, help="Timeout in seconds")
+    args = parser.parse_args()
+
+    ports = [int(p) for p in args.ports.split(",") if p.strip().isdigit()]
+    res = scan_ports(args.host, ports, args.timeout)
+    print(json.dumps(res, indent=2))`;
 
 export const PythonScriptModal: React.FC<PythonScriptModalProps> = ({
   isOpen,

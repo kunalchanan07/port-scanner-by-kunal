@@ -1,0 +1,9 @@
+# Port Scanner by Kunal - Python Backend Dependencies
+# Note: The core scanner (scanner.py) utilizes the standard Python 3 library
+# (socket, json, sys, time, ipaddress, concurrent.futures, http.server).
+# The packages below provide optional enhanced capabilities (e.g. Flask REST API, requests client testing).
+
+requests>=2.31.0
+urllib3>=2.0.0
+flask>=3.0.0
+gunicorn>=21.2.0

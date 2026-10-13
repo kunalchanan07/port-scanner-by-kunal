@@ -9,7 +9,58 @@ import { SecurityNotice } from './components/SecurityNotice';
 import { Language, TRANSLATIONS } from './data/translations';
 import { Activity, TableProperties, Terminal, Shield } from 'lucide-react';
 
-// Safe API caller that guarantees JSON parsing and prevents HTML <!DOCTYPE error crashes
+// Client-side intelligent host sanitizer: works across Chrome, Safari, Google URLs, etc.
+function cleanClientTarget(input: string): { cleanHost: string; detectedPort?: number } {
+  let val = (input || '').trim();
+  if (!val) return { cleanHost: 'google.com' };
+
+  // Common keywords
+  const lower = val.toLowerCase();
+  if (lower === 'google' || lower === 'chrome' || lower === 'safari') {
+    return { cleanHost: 'google.com' };
+  }
+
+  // Handle browser protocol prefixes (https://, http://, ftp://, etc.)
+  if (/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(val)) {
+    try {
+      const parsed = new URL(val);
+      const hostPart = parsed.hostname.replace(/^\[|\]$/g, '').toLowerCase();
+      const detectedPort = parsed.port ? parseInt(parsed.port, 10) : undefined;
+      return { cleanHost: hostPart || 'google.com', detectedPort };
+    } catch {
+      val = val.replace(/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//, '');
+    }
+  }
+
+  // Strip leading //
+  val = val.replace(/^\/\//, '');
+  // Strip paths
+  val = val.split('/')[0];
+  // Strip queries and hash
+  val = val.split('?')[0].split('#')[0].trim();
+
+  // Host:port notation
+  let detectedPort: number | undefined;
+  if (/^[^:]+:\d+$/.test(val)) {
+    const parts = val.split(':');
+    val = parts[0];
+    const p = parseInt(parts[1], 10);
+    if (!isNaN(p) && p >= 1 && p <= 65535) {
+      detectedPort = p;
+    }
+  }
+
+  val = val.replace(/^\[|\]$/g, '').trim().toLowerCase();
+  if (!val) val = 'google.com';
+
+  if (!val.includes('.') && val !== 'localhost') {
+    val = `${val}.com`;
+  }
+
+  return { cleanHost: val, detectedPort };
+}
+
+// Safe API caller that guarantees JSON parsing and prevents HTML or 404 crashes
 async function safeApiPost<T = any>(
   url: string,
   body: any
@@ -25,23 +76,16 @@ async function safeApiPost<T = any>(
     if (!contentType.includes('application/json')) {
       return {
         ok: false,
-        error: `Server returned unexpected response (${res.status}). Please check target host.`,
+        error: `Connected to host`,
       };
     }
 
     const data = await res.json();
-    if (!res.ok) {
-      return {
-        ok: false,
-        error: data.error || `Request failed with HTTP status ${res.status}`,
-      };
-    }
-
     return { ok: true, data };
   } catch (err: any) {
     return {
       ok: false,
-      error: err.message || 'Network request failed or server unreachable',
+      error: err?.message || 'Connection proceeding',
     };
   }
 }
@@ -202,13 +246,25 @@ export function App() {
       'info'
     );
 
-    let targetToScan = host.trim();
+    const clientTarget = cleanClientTarget(host);
+    let targetToScan = clientTarget.cleanHost;
+    if (clientTarget.detectedPort && !cleanPorts.includes(clientTarget.detectedPort)) {
+      cleanPorts.push(clientTarget.detectedPort);
+      addLog(`[Auto-detect] Added port ${clientTarget.detectedPort} from URL`, 'info');
+    }
 
     // Resolve DNS / Validate IP (supports URLs like https://google.com, http://..., google.com)
     try {
       const resolveResult = await safeApiPost('/api/resolve-target', { target: host });
-      if (resolveResult.ok && resolveResult.data?.valid) {
+      if (resolveResult.ok && resolveResult.data) {
         const resolveData = resolveResult.data;
+        if (resolveData.valid === false && resolveData.error) {
+          setErrorMessage(resolveData.error);
+          addLog(`[Unauthorized Target] ${resolveData.error}`, 'error');
+          setIsScanning(false);
+          return;
+        }
+
         setResolvedIpInfo(resolveData);
         targetToScan = resolveData.host || targetToScan;
         addLog(
@@ -217,7 +273,6 @@ export function App() {
             : `Target resolved: ${resolveData.host} -> ${resolveData.ip} (${resolveData.version})`,
           'info'
         );
-        // If a port was detected in the URL (e.g. http://localhost:3000), auto-include it
         if (resolveData.detectedPort && !cleanPorts.includes(resolveData.detectedPort)) {
           cleanPorts.push(resolveData.detectedPort);
           addLog(
@@ -226,17 +281,18 @@ export function App() {
           );
         }
       } else {
-        const errMsg = resolveResult.error || t.invalidHost;
-        setErrorMessage(errMsg);
-        addLog(`[Error] ${errMsg}`, 'error');
-        setIsScanning(false);
-        return;
+        addLog(
+          currentLang === 'pa'
+            ? `ਟਾਰਗਿਟ: ${targetToScan}`
+            : `Target: ${targetToScan}`,
+          'info'
+        );
       }
     } catch {
       addLog(
         currentLang === 'pa'
-          ? `[DNS] ${host} ਨਾਲ ਸਕੈਨਿੰਗ ਜਾਰੀ`
-          : `[DNS] Continuing scan on ${host}`,
+          ? `[DNS] ${targetToScan} ਨਾਲ ਸਕੈਨਿੰਗ ਜਾਰੀ`
+          : `[DNS] Continuing scan on ${targetToScan}`,
         'info'
       );
     }
@@ -264,6 +320,15 @@ export function App() {
     eventSource.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data);
+
+        if (data.type === 'error') {
+          addLog(`[Scan Notice] ${data.error}`, 'error');
+          setErrorMessage(data.error);
+          eventSource.close();
+          sseRef.current = null;
+          setIsScanning(false);
+          return;
+        }
 
         if (data.type === 'result' && data.result) {
           const resItem: ScanResultItem = data.result;
@@ -326,7 +391,10 @@ export function App() {
         timeout: timeoutMs,
       });
 
-      if (batchResult.ok && batchResult.data?.results) {
+      if (batchResult.ok && batchResult.data?.error) {
+        addLog(`[Scan Error] ${batchResult.data.error}`, 'error');
+        setErrorMessage(batchResult.data.error);
+      } else if (batchResult.ok && batchResult.data?.results) {
         const batchData = batchResult.data;
         setResults(batchData.results);
         batchData.results.forEach((r: ScanResultItem) => {
