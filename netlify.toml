@@ -5,12 +5,12 @@
 [build.environment]
   NODE_VERSION = "20"
 
-# Optional: Netlify API Reverse Proxy (uncomment if not using direct CORS URL in VITE_API_BASE_URL)
-# [[redirects]]
-#   from = "/api/*"
-#   to = "https://YOUR_BACKEND_URL.onrender.com/api/:splat"
-#   status = 200
-#   force = true
+# Netlify API Reverse Proxy: forwards any /api/* calls to Render FastAPI backend
+[[redirects]]
+  from = "/api/*"
+  to = "https://port-scanner-by-kunal.onrender.com/api/:splat"
+  status = 200
+  force = true
 
 # Redirects for Single Page Application (SPA) routing
 [[redirects]]

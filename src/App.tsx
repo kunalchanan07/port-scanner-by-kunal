@@ -60,10 +60,17 @@ function cleanClientTarget(input: string): { cleanHost: string; detectedPort?: n
   return { cleanHost: val, detectedPort };
 }
 
+// Production Render Python backend URL
+export const DEFAULT_RENDER_BACKEND_URL = 'https://port-scanner-by-kunal.onrender.com';
+
 // Single Backend API URL variable (VITE_API_BASE_URL)
-// Defaults to empty string so it works immediately without environment variables
+// Reads import.meta.env.VITE_API_BASE_URL if configured in Netlify,
+// and falls back directly to the deployed Render backend so scans always succeed even if the build environment variable was omitted or cached.
+const rawEnvUrl = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.trim();
 export const BACKEND_URL = (
-  (import.meta.env.VITE_API_BASE_URL as string | undefined) || ''
+  rawEnvUrl && rawEnvUrl.length > 0
+    ? rawEnvUrl
+    : DEFAULT_RENDER_BACKEND_URL
 ).replace(/\/+$/, '');
 
 export function getApiEndpoint(path: string): string {
@@ -89,13 +96,24 @@ async function safeApiPost<T = any>(
       signal,
     });
 
-    const contentType = res.headers.get('content-type') || '';
+    const contentType = (res.headers.get('content-type') || '').toLowerCase();
+
+    // Validate JSON response to prevent interpreting Netlify's HTML error/index page as API data
     if (!contentType.includes('application/json')) {
-      // Diagnostic explanation if static host (Netlify) served index.html instead of the Python backend
-      const isNetlifyFallback = !BACKEND_URL;
-      const errorMsg = isNetlifyFallback
-        ? 'Scan failed: Netlify is returning HTML because no Python backend is configured. To fix this, deploy the included FastAPI backend (main.py) to Render/Railway and set VITE_API_BASE_URL in your Netlify site settings.'
-        : `Scan failed: The backend at ${BACKEND_URL} returned non-JSON (${res.status} ${res.statusText}). Verify the FastAPI backend is running and CORS is enabled.`;
+      const responseText = await res.text().catch(() => '');
+      const isHtmlResponse =
+        contentType.includes('text/html') ||
+        responseText.trim().startsWith('<!DOCTYPE') ||
+        responseText.trim().startsWith('<html') ||
+        responseText.includes('<head>') ||
+        responseText.includes('id="root"');
+
+      let errorMsg: string;
+      if (isHtmlResponse) {
+        errorMsg = `Netlify returned an HTML page instead of API JSON response (${res.status} ${res.statusText || 'OK'}). The endpoint ${fullUrl} was intercepted by Netlify's static SPA router. Verify that the Python FastAPI backend is live at ${BACKEND_URL} and that Netlify has VITE_API_BASE_URL configured in Site configuration -> Environment variables.`;
+      } else {
+        errorMsg = `Server at ${fullUrl} returned non-JSON data (${res.status} ${res.statusText || 'OK'}, Content-Type: ${contentType || 'unknown'}).`;
+      }
 
       return {
         ok: false,
@@ -121,12 +139,9 @@ async function safeApiPost<T = any>(
         error: 'Scan was stopped or request timed out.',
       };
     }
-    const hint = BACKEND_URL
-      ? `Could not reach Python backend at ${BACKEND_URL}. Check if your backend is online and accessible.`
-      : 'Could not reach backend. On Netlify, configure VITE_API_BASE_URL in site settings with your deployed FastAPI service URL.';
     return {
       ok: false,
-      error: `${err?.message || 'Network connection failed'}. ${hint}`,
+      error: `Could not reach Python backend at ${BACKEND_URL}: ${err?.message || 'Network connection failed'}. If the Render backend was inactive, it may take ~30-50s to wake up on the first request.`,
     };
   }
 }

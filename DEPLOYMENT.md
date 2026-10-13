@@ -58,15 +58,16 @@ uvicorn main:app --host 0.0.0.0 --port 8000
 ## 4. How to Connect the Python Backend to Your Netlify Website
 
 1. Log in to your [Netlify Dashboard](https://app.netlify.com).
-2. Select your Port Scanner site.
+2. Select your **Port Scanner by Kunal** site.
 3. Go to **Site configuration** -> **Environment variables**.
-4. Click **Add a variable**:
+4. Set or verify the variable:
    - **Key:** `VITE_API_BASE_URL`
-   - **Value:** `https://your-backend.onrender.com` (replace with your actual backend URL, without a trailing slash)
+   - **Value:** `https://port-scanner-by-kunal.onrender.com`
 5. Save the variable.
 6. Trigger a new deploy (**Deploys** -> **Trigger deploy** -> **Clear cache and deploy site**).
 
-> **Note:** Vite environment variables prefixed with `VITE_` are baked into the frontend build at compile time, so a redeploy is required after setting the variable.
+> **Why a redeploy is required:** Vite client-side environment variables (`import.meta.env.VITE_*`) are statically embedded into JavaScript bundles at build time (`npm run build`). Once you set `VITE_API_BASE_URL`, clearing the cache and rebuilding ensures the frontend bundles directly point to `https://port-scanner-by-kunal.onrender.com`.
+> **Automatic Fallback:** The frontend code also defaults to `https://port-scanner-by-kunal.onrender.com`, and `netlify.toml` now includes an automatic reverse proxy redirect from `/api/*` to `https://port-scanner-by-kunal.onrender.com/api/:splat` so HTML will never be returned.
 
 ---
 
