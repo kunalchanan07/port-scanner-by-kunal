@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { Navbar } from './components/Navbar';
 import { ScanControls } from './components/ScanControls';
 import { SummaryStatsCards } from './components/SummaryStatsCards';
@@ -8,6 +8,43 @@ import { PythonScriptModal } from './components/PythonScriptModal';
 import { SecurityNotice } from './components/SecurityNotice';
 import { Language, TRANSLATIONS } from './data/translations';
 import { Activity, TableProperties, Terminal, Shield } from 'lucide-react';
+
+// Safe API caller that guarantees JSON parsing and prevents HTML <!DOCTYPE error crashes
+async function safeApiPost<T = any>(
+  url: string,
+  body: any
+): Promise<{ ok: boolean; data?: T; error?: string }> {
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+
+    const contentType = res.headers.get('content-type') || '';
+    if (!contentType.includes('application/json')) {
+      return {
+        ok: false,
+        error: `Server returned unexpected response (${res.status}). Please check target host.`,
+      };
+    }
+
+    const data = await res.json();
+    if (!res.ok) {
+      return {
+        ok: false,
+        error: data.error || `Request failed with HTTP status ${res.status}`,
+      };
+    }
+
+    return { ok: true, data };
+  } catch (err: any) {
+    return {
+      ok: false,
+      error: err.message || 'Network request failed or server unreachable',
+    };
+  }
+}
 
 export function App() {
   // English by default as requested
@@ -24,12 +61,40 @@ export function App() {
   } | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
+  // Theme Toggle: persists in localStorage and syncs with system preference
+  const [isDarkMode, setIsDarkMode] = useState<boolean>(() => {
+    try {
+      const saved = localStorage.getItem('port_scanner_theme');
+      if (saved === 'dark') return true;
+      if (saved === 'light') return false;
+      return window.matchMedia('(prefers-color-scheme: dark)').matches;
+    } catch {
+      return false;
+    }
+  });
+
+  useEffect(() => {
+    try {
+      if (isDarkMode) {
+        document.documentElement.classList.add('dark');
+        localStorage.setItem('port_scanner_theme', 'dark');
+      } else {
+        document.documentElement.classList.remove('dark');
+        localStorage.setItem('port_scanner_theme', 'light');
+      }
+    } catch {
+      // Ignore localStorage errors
+    }
+  }, [isDarkMode]);
+
   const [results, setResults] = useState<ScanResultItem[]>([]);
   const [logs, setLogs] = useState<TerminalLog[]>([]);
   const [isPythonModalOpen, setIsPythonModalOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<'both' | 'table' | 'terminal'>('both');
 
   const sseRef = useRef<EventSource | null>(null);
+  const isScanFinishedRef = useRef(false);
+  const resultsCountRef = useRef(0);
   const t = TRANSLATIONS[currentLang];
 
   // Helper to append a line to the live terminal
@@ -58,16 +123,21 @@ export function App() {
     setErrorMessage(null);
     try {
       const res = await fetch('/api/my-ip');
-      const data = await res.json();
-      if (data.ip) {
-        setHost(data.ip);
-        addLog(
-          currentLang === 'pa'
-            ? `ਕਲਾਇੰਟ IP ਪਤਾ ਲੱਗਾ: ${data.ip}`
-            : `Client IP detected: ${data.ip}`,
-          'info'
-        );
+      const contentType = res.headers.get('content-type') || '';
+      if (contentType.includes('application/json')) {
+        const data = await res.json();
+        if (data.ip) {
+          setHost(data.ip);
+          addLog(
+            currentLang === 'pa'
+              ? `ਕਲਾਇੰਟ IP ਪਤਾ ਲੱਗਾ: ${data.ip}`
+              : `Client IP detected: ${data.ip}`,
+            'info'
+          );
+          return;
+        }
       }
+      setHost('127.0.0.1');
     } catch {
       setHost('127.0.0.1');
       addLog(
@@ -90,6 +160,8 @@ export function App() {
 
     setErrorMessage(null);
     setIsScanning(true);
+    isScanFinishedRef.current = false;
+    resultsCountRef.current = 0;
 
     const rawPorts = portsInput
       .split(',')
@@ -134,13 +206,9 @@ export function App() {
 
     // Resolve DNS / Validate IP (supports URLs like https://google.com, http://..., google.com)
     try {
-      const resolveRes = await fetch('/api/resolve-target', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ target: host }),
-      });
-      const resolveData = await resolveRes.json();
-      if (resolveData.valid) {
+      const resolveResult = await safeApiPost('/api/resolve-target', { target: host });
+      if (resolveResult.ok && resolveResult.data?.valid) {
+        const resolveData = resolveResult.data;
         setResolvedIpInfo(resolveData);
         targetToScan = resolveData.host || targetToScan;
         addLog(
@@ -158,8 +226,9 @@ export function App() {
           );
         }
       } else {
-        setErrorMessage(resolveData.error || t.invalidHost);
-        addLog(`[Error] ${resolveData.error || 'Failed to resolve host'}`, 'error');
+        const errMsg = resolveResult.error || t.invalidHost;
+        setErrorMessage(errMsg);
+        addLog(`[Error] ${errMsg}`, 'error');
         setIsScanning(false);
         return;
       }
@@ -198,6 +267,7 @@ export function App() {
 
         if (data.type === 'result' && data.result) {
           const resItem: ScanResultItem = data.result;
+          resultsCountRef.current += 1;
           setResults((prev) => [...prev, resItem]);
 
           if (resItem.status === 'OPEN') {
@@ -217,12 +287,14 @@ export function App() {
             );
           }
         } else if (data.type === 'complete') {
+          isScanFinishedRef.current = true;
           addLog(
             `\n===== ${currentLang === 'pa' ? 'ਸਕੈਨ ਮੁਕੰਮਲ ਹੋ ਗਿਆ' : 'SCAN COMPLETE'} =====`,
             'header',
             false
           );
           eventSource.close();
+          sseRef.current = null;
           setIsScanning(false);
         }
       } catch (err) {
@@ -232,50 +304,53 @@ export function App() {
 
     eventSource.onerror = async () => {
       eventSource.close();
-      if (results.length === 0) {
+      sseRef.current = null;
+
+      // If scan already completed or we already collected ports via SSE, exit cleanly
+      if (isScanFinishedRef.current || resultsCountRef.current > 0) {
+        setIsScanning(false);
+        return;
+      }
+
+      // If SSE stream failed upfront (e.g., browser proxy/CORS buffer drop), smoothly fallback to batch socket scan
+      addLog(
+        currentLang === 'pa'
+          ? 'ਬੈਚ ਮੋਡ ਵਿੱਚ ਸਾਕਟ ਸਕੈਨਿੰਗ ਹੋ ਰਹੀ ਹੈ...'
+          : 'Connecting via socket batch scan...',
+        'info'
+      );
+
+      const batchResult = await safeApiPost('/api/scan', {
+        host: targetToScan,
+        ports: cleanPorts,
+        timeout: timeoutMs,
+      });
+
+      if (batchResult.ok && batchResult.data?.results) {
+        const batchData = batchResult.data;
+        setResults(batchData.results);
+        batchData.results.forEach((r: ScanResultItem) => {
+          if (r.status === 'OPEN') {
+            addLog(
+              `[OPEN] Port ${r.port} (${r.service?.name || 'TCP'}) - ${r.latencyMs}ms`,
+              'open'
+            );
+          } else {
+            addLog(`[CLOSED/FILTERED] Port ${r.port}`, 'closed');
+          }
+        });
+        addLog(
+          `\n===== ${currentLang === 'pa' ? 'ਸਕੈਨ ਮੁਕੰਮਲ' : 'SCAN COMPLETE'} =====`,
+          'header',
+          false
+        );
+      } else {
         addLog(
           currentLang === 'pa'
-            ? 'ਬੈਚ ਮੋਡ ਵਿੱਚ ਸਕੈਨਿੰਗ ਹੋ ਰਹੀ ਹੈ...'
-            : 'Falling back to batch socket scan...',
-          'info'
+            ? `ਸਕੈਨ ਅਸਫਲ: ${batchResult.error || 'ਕਨੈਕਸ਼ਨ ਅਸਮਰੱਥ'}`
+            : `Scan failed: ${batchResult.error || 'Connection failed'}`,
+          'error'
         );
-        try {
-          const scanRes = await fetch('/api/scan', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              host: targetToScan,
-              ports: cleanPorts,
-              timeout: timeoutMs,
-            }),
-          });
-          const batchData = await scanRes.json();
-          if (batchData.results) {
-            setResults(batchData.results);
-            batchData.results.forEach((r: ScanResultItem) => {
-              if (r.status === 'OPEN') {
-                addLog(
-                  `[OPEN] Port ${r.port} (${r.service?.name || 'TCP'}) - ${r.latencyMs}ms`,
-                  'open'
-                );
-              } else {
-                addLog(`[CLOSED/FILTERED] Port ${r.port}`, 'closed');
-              }
-            });
-            addLog(
-              `\n===== ${currentLang === 'pa' ? 'ਸਕੈਨ ਮੁਕੰਮਲ' : 'SCAN COMPLETE'} =====`,
-              'header',
-              false
-            );
-          }
-        } catch (e: any) {
-          addLog(
-            currentLang === 'pa'
-              ? `ਸਕੈਨ ਅਸਫਲ: ${e.message}`
-              : `Scan failed: ${e.message}`,
-            'error'
-          );
-        }
       }
       setIsScanning(false);
     };
@@ -283,6 +358,7 @@ export function App() {
 
   // Stop current scan
   const handleStopScan = () => {
+    isScanFinishedRef.current = true;
     if (sseRef.current) {
       sseRef.current.close();
       sseRef.current = null;
@@ -298,6 +374,8 @@ export function App() {
 
   // Clear results and logs
   const handleClear = () => {
+    isScanFinishedRef.current = true;
+    resultsCountRef.current = 0;
     if (sseRef.current) {
       sseRef.current.close();
       sseRef.current = null;
@@ -356,13 +434,15 @@ export function App() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-800 flex flex-col selection:bg-blue-600 selection:text-white bg-[radial-gradient(#e2e8f0_1px,transparent_1px)] [background-size:24px_24px]">
+    <div className="min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-800 dark:text-slate-100 flex flex-col selection:bg-blue-600 selection:text-white bg-[radial-gradient(#e2e8f0_1px,transparent_1px)] dark:bg-[radial-gradient(#1e293b_1px,transparent_1px)] [background-size:24px_24px] transition-colors duration-200">
       {/* Top Navbar */}
       <Navbar
         currentLang={currentLang}
         onLanguageChange={setCurrentLang}
         onOpenPythonModal={() => setIsPythonModalOpen(true)}
         onSelectTarget={(t) => setHost(t)}
+        isDarkMode={isDarkMode}
+        onToggleDarkMode={() => setIsDarkMode((prev) => !prev)}
       />
 
       {/* Main Container */}
@@ -397,21 +477,21 @@ export function App() {
         />
 
         {/* View Layout Switcher */}
-        <div className="flex items-center justify-between border-b border-slate-200 pb-3">
+        <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-3">
           <div className="flex items-center gap-2">
-            <Activity className="h-4 w-4 text-blue-600" />
-            <h2 className="text-sm font-bold uppercase tracking-wider text-slate-900">
+            <Activity className="h-4 w-4 text-blue-600 dark:text-blue-400" />
+            <h2 className="text-sm font-bold uppercase tracking-wider text-slate-900 dark:text-white">
               {t.resultsView}
             </h2>
           </div>
 
-          <div className="flex items-center gap-1 rounded-xl border border-slate-200 bg-white p-1 text-xs shadow-2xs">
+          <div className="flex items-center gap-1 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-1 text-xs shadow-2xs">
             <button
               onClick={() => setActiveTab('both')}
               className={`rounded-lg px-3 py-1 font-bold transition ${
                 activeTab === 'both'
                   ? 'bg-blue-600 text-white'
-                  : 'text-slate-600 hover:text-blue-700'
+                  : 'text-slate-600 dark:text-slate-300 hover:text-blue-700 dark:hover:text-blue-400'
               }`}
             >
               {t.splitView}
@@ -421,7 +501,7 @@ export function App() {
               className={`rounded-lg px-3 py-1 font-bold transition ${
                 activeTab === 'table'
                   ? 'bg-blue-600 text-white'
-                  : 'text-slate-600 hover:text-blue-700'
+                  : 'text-slate-600 dark:text-slate-300 hover:text-blue-700 dark:hover:text-blue-400'
               }`}
             >
               <TableProperties className="inline h-3.5 w-3.5 mr-1" />
@@ -432,7 +512,7 @@ export function App() {
               className={`rounded-lg px-3 py-1 font-bold transition ${
                 activeTab === 'terminal'
                   ? 'bg-blue-600 text-white'
-                  : 'text-slate-600 hover:text-blue-700'
+                  : 'text-slate-600 dark:text-slate-300 hover:text-blue-700 dark:hover:text-blue-400'
               }`}
             >
               <Terminal className="inline h-3.5 w-3.5 mr-1" />
@@ -491,12 +571,12 @@ export function App() {
       />
 
       {/* Professional Footer */}
-      <footer className="border-t border-slate-200 bg-white py-4 text-center text-xs text-slate-500 mt-8 shadow-xs">
+      <footer className="border-t border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 py-4 text-center text-xs text-slate-500 dark:text-slate-400 mt-8 shadow-xs transition-colors duration-200">
         <div className="mx-auto max-w-7xl px-4 flex flex-col sm:flex-row items-center justify-between gap-2">
-          <p className="font-semibold text-slate-900">
+          <p className="font-semibold text-slate-900 dark:text-slate-100">
             {t.footerTagline}
           </p>
-          <div className="flex items-center gap-3 text-[11px] font-mono text-slate-600 font-semibold">
+          <div className="flex items-center gap-3 text-[11px] font-mono text-slate-600 dark:text-slate-400 font-semibold">
             <span>socket.SOCK_STREAM</span>
             <span>•</span>
             <span>s.connect_ex</span>

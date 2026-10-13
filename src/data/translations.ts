@@ -81,6 +81,10 @@ export interface Translations {
   searchByServiceOrPort: string;
   lookupInstantPort: string;
   close: string;
+  themeToggleDark: string;
+  themeToggleLight: string;
+  switchToDarkMode: string;
+  switchToLightMode: string;
 }
 
 export const TRANSLATIONS: Record<Language, Translations> = {
@@ -164,6 +168,10 @@ export const TRANSLATIONS: Record<Language, Translations> = {
     searchByServiceOrPort: 'Type port number (e.g. 80, 22, 3306) or service name to inspect...',
     lookupInstantPort: 'Lookup Port',
     close: 'Close',
+    themeToggleDark: 'Dark Mode',
+    themeToggleLight: 'Light Mode',
+    switchToDarkMode: 'Switch to Dark Mode',
+    switchToLightMode: 'Switch to Light Mode',
   },
   pa: {
     appName: 'ਪੋਰਟ ਸਕੈਨਰ ਬਾਈ ਕੁਨਾਲ',
@@ -245,6 +253,10 @@ export const TRANSLATIONS: Record<Language, Translations> = {
     searchByServiceOrPort: 'ਪੋਰਟ ਨੰਬਰ (ਜਿਵੇਂ 80, 22, 3306) ਜਾਂ ਸਰਵਿਸ ਨਾਮ ਲਿਖੋ...',
     lookupInstantPort: 'ਵੇਖੋ',
     close: 'ਬੰਦ ਕਰੋ',
+    themeToggleDark: 'ਡਾਰਕ ਮੋਡ',
+    themeToggleLight: 'ਲਾਈਟ ਮੋਡ',
+    switchToDarkMode: 'ਡਾਰਕ ਮੋਡ ਲਗਾਓ',
+    switchToLightMode: 'ਲਾਈਟ ਮੋਡ ਲਗਾਓ',
   },
   hi: {
     appName: 'पोर्ट स्कैनर बाय कुणाल',
@@ -326,5 +338,10 @@ export const TRANSLATIONS: Record<Language, Translations> = {
     searchByServiceOrPort: 'पोर्ट नंबर (उदा: 80, 22, 3306) या सर्विस नाम दर्ज करें...',
     lookupInstantPort: 'खोजें',
     close: 'बंद करें',
+    themeToggleDark: 'डार्क मोड',
+    themeToggleLight: 'लाइट मोड',
+    switchToDarkMode: 'डार्क मोड लगाएं',
+    switchToLightMode: 'लाइट मोड लगाएं',
   },
 };
+

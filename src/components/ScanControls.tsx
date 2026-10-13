@@ -132,20 +132,20 @@ export const ScanControls: React.FC<ScanControlsProps> = ({
   };
 
   return (
-    <div className="rounded-2xl border border-slate-200/90 bg-white p-5 shadow-xs sm:p-7 space-y-5">
+    <div className="rounded-2xl border border-slate-200/90 dark:border-slate-800 bg-white dark:bg-slate-900 p-5 shadow-xs sm:p-7 space-y-5 transition-colors duration-200">
       <div className="grid gap-6 lg:grid-cols-12">
         {/* Left Column: Target IP (5 cols) */}
         <div className="lg:col-span-5 space-y-2.5">
           <div className="flex items-center justify-between">
-            <label className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-slate-900">
-              <Server className="h-4 w-4 text-blue-600" />
+            <label className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-slate-900 dark:text-slate-100">
+              <Server className="h-4 w-4 text-blue-600 dark:text-blue-400" />
               <span>{t.targetHostLabel}</span>
             </label>
             <button
               type="button"
               onClick={onDetectMyIp}
               disabled={isScanning || isDetectingIp}
-              className="flex items-center gap-1.5 text-xs font-semibold text-blue-600 hover:text-blue-800 transition underline underline-offset-4 disabled:opacity-50"
+              className="flex items-center gap-1.5 text-xs font-semibold text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-300 transition underline underline-offset-4 disabled:opacity-50"
             >
               <Compass className="h-3.5 w-3.5" />
               <span>{isDetectingIp ? t.resolving : t.detectMyIp}</span>
@@ -159,29 +159,29 @@ export const ScanControls: React.FC<ScanControlsProps> = ({
               onChange={(e) => setHost(e.target.value)}
               placeholder={t.targetHostPlaceholder}
               disabled={isScanning}
-              className="w-full rounded-xl border border-blue-200 bg-blue-50/30 px-4 py-3 font-mono text-sm font-medium text-blue-950 placeholder-slate-400 shadow-inner outline-none transition focus:border-blue-600 focus:bg-white focus:ring-3 focus:ring-blue-500/20 disabled:opacity-60"
+              className="w-full rounded-xl border border-blue-200 dark:border-slate-700 bg-blue-50/30 dark:bg-slate-950 px-4 py-3 font-mono text-sm font-medium text-blue-950 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500 shadow-inner outline-none transition focus:border-blue-600 focus:bg-white dark:focus:bg-slate-900 focus:ring-3 focus:ring-blue-500/20 disabled:opacity-60"
             />
           </div>
 
           {/* Browser / URL Compatibility Hint */}
-          <div className="flex items-center gap-1.5 text-[11px] text-slate-500 leading-tight">
-            <Globe className="h-3.5 w-3.5 text-blue-500 shrink-0" />
+          <div className="flex items-center gap-1.5 text-[11px] text-slate-500 dark:text-slate-400 leading-tight">
+            <Globe className="h-3.5 w-3.5 text-blue-500 dark:text-blue-400 shrink-0" />
             <span>{t.browserUrlHint}</span>
           </div>
 
           {/* DNS Resolution Info Badge */}
           {resolvedIpInfo && resolvedIpInfo.valid && (
-            <div className="flex items-center gap-2 text-xs text-emerald-800 bg-emerald-50 border border-emerald-200 rounded-xl px-3 py-2 font-mono">
-              <CheckCircle2 className="h-4 w-4 text-emerald-600 shrink-0" />
+            <div className="flex items-center gap-2 text-xs text-emerald-800 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 rounded-xl px-3 py-2 font-mono">
+              <CheckCircle2 className="h-4 w-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
               <span>
-                {t.resolvedTo} <strong className="text-emerald-950">{resolvedIpInfo.ip}</strong> ({resolvedIpInfo.version})
+                {t.resolvedTo} <strong className="text-emerald-950 dark:text-emerald-200">{resolvedIpInfo.ip}</strong> ({resolvedIpInfo.version})
               </span>
             </div>
           )}
 
           {errorMessage && (
-            <div className="flex items-center gap-2 text-xs text-rose-700 bg-rose-50 border border-rose-200 rounded-xl px-3 py-2">
-              <AlertCircle className="h-4 w-4 text-rose-600 shrink-0" />
+            <div className="flex items-center gap-2 text-xs text-rose-700 dark:text-rose-300 bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800 rounded-xl px-3 py-2">
+              <AlertCircle className="h-4 w-4 text-rose-600 dark:text-rose-400 shrink-0" />
               <span>{errorMessage}</span>
             </div>
           )}
@@ -190,11 +190,11 @@ export const ScanControls: React.FC<ScanControlsProps> = ({
         {/* Middle Column: Port Numbers Input (5 cols) */}
         <div className="lg:col-span-5 space-y-2.5">
           <div className="flex items-center justify-between">
-            <label className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-blue-950">
-              <Hash className="h-4 w-4 text-blue-600" />
+            <label className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-blue-950 dark:text-slate-100">
+              <Hash className="h-4 w-4 text-blue-600 dark:text-blue-400" />
               <span>{t.portsLabel}</span>
             </label>
-            <span className="text-[11px] font-medium text-slate-500">
+            <span className="text-[11px] font-medium text-slate-500 dark:text-slate-400">
               {t.maxPortsNotice}
             </span>
           </div>
@@ -205,12 +205,12 @@ export const ScanControls: React.FC<ScanControlsProps> = ({
             onChange={(e) => setPortsInput(e.target.value)}
             placeholder={t.portsPlaceholder}
             disabled={isScanning}
-            className="w-full rounded-xl border border-blue-200 bg-blue-50/30 px-4 py-3 font-mono text-sm font-medium text-blue-950 placeholder-slate-400 shadow-inner outline-none transition focus:border-blue-600 focus:bg-white focus:ring-3 focus:ring-blue-500/20 disabled:opacity-60"
+            className="w-full rounded-xl border border-blue-200 dark:border-slate-700 bg-blue-50/30 dark:bg-slate-950 px-4 py-3 font-mono text-sm font-medium text-blue-950 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500 shadow-inner outline-none transition focus:border-blue-600 focus:bg-white dark:focus:bg-slate-900 focus:ring-3 focus:ring-blue-500/20 disabled:opacity-60"
           />
 
           {/* Quick Presets in Blue & White */}
           <div className="flex flex-wrap items-center gap-1.5 pt-1">
-            <span className="text-[11px] font-semibold text-slate-500">{t.quickPresets}:</span>
+            <span className="text-[11px] font-semibold text-slate-500 dark:text-slate-400">{t.quickPresets}:</span>
             {PRESET_BUNDLES.map((preset) => {
               const label =
                 currentLang === 'pa'
@@ -224,7 +224,7 @@ export const ScanControls: React.FC<ScanControlsProps> = ({
                   type="button"
                   onClick={() => applyPreset(preset.ports)}
                   disabled={isScanning}
-                  className="rounded-lg border border-blue-200 bg-blue-50/80 px-2.5 py-1 text-[11px] font-semibold text-blue-800 hover:border-blue-500 hover:bg-blue-600 hover:text-white transition shadow-2xs disabled:opacity-50"
+                  className="rounded-lg border border-blue-200 dark:border-slate-700 bg-blue-50/80 dark:bg-slate-800 px-2.5 py-1 text-[11px] font-semibold text-blue-800 dark:text-blue-300 hover:border-blue-500 hover:bg-blue-600 hover:text-white dark:hover:bg-blue-600 dark:hover:text-white transition shadow-2xs disabled:opacity-50"
                   title={preset.description}
                 >
                   {label}
@@ -235,7 +235,7 @@ export const ScanControls: React.FC<ScanControlsProps> = ({
               type="button"
               onClick={() => setShowRangeModal(!showRangeModal)}
               disabled={isScanning}
-              className="rounded-lg border border-indigo-200 bg-indigo-50 px-2.5 py-1 text-[11px] font-semibold text-indigo-700 hover:bg-indigo-600 hover:text-white transition disabled:opacity-50"
+              className="rounded-lg border border-indigo-200 dark:border-indigo-800 bg-indigo-50 dark:bg-indigo-950/60 px-2.5 py-1 text-[11px] font-semibold text-indigo-700 dark:text-indigo-300 hover:bg-indigo-600 hover:text-white transition disabled:opacity-50"
             >
               {t.presetCustomRange}
             </button>
@@ -243,7 +243,7 @@ export const ScanControls: React.FC<ScanControlsProps> = ({
 
           {/* Custom Range Popover */}
           {showRangeModal && (
-            <form onSubmit={handleApplyRange} className="flex items-center gap-2 rounded-xl border border-blue-200 bg-blue-50/80 p-2 text-xs text-blue-950">
+            <form onSubmit={handleApplyRange} className="flex items-center gap-2 rounded-xl border border-blue-200 dark:border-slate-700 bg-blue-50/80 dark:bg-slate-800 p-2 text-xs text-blue-950 dark:text-slate-100">
               <span className="font-semibold">Start:</span>
               <input
                 type="number"
@@ -251,7 +251,7 @@ export const ScanControls: React.FC<ScanControlsProps> = ({
                 max="65535"
                 value={rangeStart}
                 onChange={(e) => setRangeStart(e.target.value)}
-                className="w-16 rounded-lg border border-blue-200 bg-white px-2 py-1 text-center font-mono text-blue-950"
+                className="w-16 rounded-lg border border-blue-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-2 py-1 text-center font-mono text-blue-950 dark:text-white"
               />
               <span className="font-semibold">End:</span>
               <input
@@ -260,7 +260,7 @@ export const ScanControls: React.FC<ScanControlsProps> = ({
                 max="65535"
                 value={rangeEnd}
                 onChange={(e) => setRangeEnd(e.target.value)}
-                className="w-16 rounded-lg border border-blue-200 bg-white px-2 py-1 text-center font-mono text-blue-950"
+                className="w-16 rounded-lg border border-blue-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-2 py-1 text-center font-mono text-blue-950 dark:text-white"
               />
               <button
                 type="submit"
@@ -274,13 +274,13 @@ export const ScanControls: React.FC<ScanControlsProps> = ({
 
         {/* Right Column: Timeout & Action Buttons (2 cols) */}
         <div className="lg:col-span-2 flex flex-col justify-between space-y-3.5">
-          <div className="space-y-1.5 rounded-xl border border-blue-100 bg-blue-50/40 p-3">
+          <div className="space-y-1.5 rounded-xl border border-blue-100 dark:border-slate-800 bg-blue-50/40 dark:bg-slate-950/60 p-3">
             <div className="flex items-center justify-between">
-              <label className="flex items-center gap-1.5 text-xs font-bold text-blue-950">
-                <Clock className="h-3.5 w-3.5 text-blue-600" />
+              <label className="flex items-center gap-1.5 text-xs font-bold text-blue-950 dark:text-slate-200">
+                <Clock className="h-3.5 w-3.5 text-blue-600 dark:text-blue-400" />
                 <span>{t.timeoutLabel}</span>
               </label>
-              <span className="font-mono text-xs font-bold text-blue-700">
+              <span className="font-mono text-xs font-bold text-blue-700 dark:text-blue-400">
                 {timeoutSec}s
               </span>
             </div>
@@ -292,9 +292,9 @@ export const ScanControls: React.FC<ScanControlsProps> = ({
               value={timeoutSec}
               onChange={(e) => setTimeoutSec(parseFloat(e.target.value))}
               disabled={isScanning}
-              className="h-2 w-full cursor-pointer appearance-none rounded-lg bg-blue-200 accent-blue-600 disabled:opacity-50"
+              className="h-2 w-full cursor-pointer appearance-none rounded-lg bg-blue-200 dark:bg-slate-700 accent-blue-600 disabled:opacity-50"
             />
-            <div className="flex justify-between text-[10px] text-slate-500 font-medium">
+            <div className="flex justify-between text-[10px] text-slate-500 dark:text-slate-400 font-medium">
               <span>0.3s ({t.timeoutFast})</span>
               <span>1.0s</span>
               <span>3.0s</span>
@@ -326,7 +326,7 @@ export const ScanControls: React.FC<ScanControlsProps> = ({
               type="button"
               onClick={onClear}
               disabled={isScanning}
-              className="flex w-full items-center justify-center gap-1.5 rounded-xl border border-slate-200 bg-white py-2 text-xs font-semibold text-slate-600 transition hover:border-slate-300 hover:bg-slate-50 hover:text-slate-900 disabled:opacity-50"
+              className="flex w-full items-center justify-center gap-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 py-2 text-xs font-semibold text-slate-600 dark:text-slate-300 transition hover:border-slate-300 dark:hover:border-slate-600 hover:bg-slate-50 dark:hover:bg-slate-700 hover:text-slate-900 dark:hover:text-white disabled:opacity-50"
             >
               <RotateCcw className="h-3.5 w-3.5" />
               <span>{t.clearResults}</span>
@@ -336,11 +336,11 @@ export const ScanControls: React.FC<ScanControlsProps> = ({
       </div>
 
       {/* Recent Targets Section (Persisted in localStorage, max 5 items) */}
-      <div className="border-t border-blue-100 pt-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
-        <div className="flex items-center gap-2 text-xs text-blue-950 font-bold">
-          <History className="h-3.5 w-3.5 text-blue-600" />
+      <div className="border-t border-blue-100 dark:border-slate-800 pt-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+        <div className="flex items-center gap-2 text-xs text-blue-950 dark:text-slate-200 font-bold">
+          <History className="h-3.5 w-3.5 text-blue-600 dark:text-blue-400" />
           <span>{t.recentTargets}</span>
-          <span className="text-[10px] font-mono text-slate-400">({recentTargets.length}/5)</span>
+          <span className="text-[10px] font-mono text-slate-400 dark:text-slate-500">({recentTargets.length}/5)</span>
         </div>
 
         <div className="flex flex-wrap items-center gap-1.5 flex-1 sm:justify-end">
@@ -359,7 +359,7 @@ export const ScanControls: React.FC<ScanControlsProps> = ({
                     className={`group inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-mono transition cursor-pointer select-none ${
                       isSelected
                         ? 'bg-blue-600 text-white font-bold shadow-sm'
-                        : 'bg-blue-50/80 border border-blue-200 text-blue-900 hover:bg-blue-100 hover:border-blue-400'
+                        : 'bg-blue-50/80 dark:bg-slate-800 border border-blue-200 dark:border-slate-700 text-blue-900 dark:text-blue-300 hover:bg-blue-100 dark:hover:bg-slate-700'
                     } ${isScanning ? 'opacity-60 cursor-not-allowed' : ''}`}
                     title={`Click to set target: ${item}`}
                   >
@@ -371,7 +371,7 @@ export const ScanControls: React.FC<ScanControlsProps> = ({
                       className={`rounded-full p-0.5 transition ${
                         isSelected
                           ? 'text-blue-200 hover:bg-blue-700 hover:text-white'
-                          : 'text-slate-400 hover:bg-blue-200 hover:text-rose-600'
+                          : 'text-slate-400 hover:bg-blue-200 dark:hover:bg-slate-600 hover:text-rose-600'
                       }`}
                       title="Remove from recent"
                     >

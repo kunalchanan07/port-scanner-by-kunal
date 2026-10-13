@@ -269,61 +269,81 @@ function testPort(rawHost: string, port: number, timeoutMs = 1200): Promise<{
   error?: string;
 }> {
   return new Promise((resolve) => {
-    const { cleanHost } = sanitizeTargetHost(rawHost);
-    const targetHost = cleanHost || rawHost;
-    const startTime = Date.now();
-    const socket = new net.Socket();
-    let hasResolved = false;
+    try {
+      const { cleanHost } = sanitizeTargetHost(rawHost);
+      const targetHost = cleanHost || rawHost;
+      const startTime = Date.now();
+      const socket = new net.Socket();
+      let hasResolved = false;
 
-    const finalize = (status: 'OPEN' | 'CLOSED' | 'FILTERED', errorMsg?: string) => {
-      if (hasResolved) return;
-      hasResolved = true;
-      const latencyMs = Date.now() - startTime;
-      socket.destroy();
+      const finalize = (status: 'OPEN' | 'CLOSED' | 'FILTERED', errorMsg?: string) => {
+        if (hasResolved) return;
+        hasResolved = true;
+        const latencyMs = Date.now() - startTime;
+        try {
+          socket.destroy();
+        } catch {
+          // Ignore socket destruction errors
+        }
+        resolve({
+          port,
+          status,
+          latencyMs,
+          service: WELL_KNOWN_SERVICES[port] || {
+            name: `Port ${port}`,
+            description: 'Custom/Unregistered Port',
+            protocol: 'TCP',
+          },
+          error: errorMsg,
+        });
+      };
+
+      socket.setTimeout(timeoutMs);
+
+      socket.on('connect', () => {
+        finalize('OPEN');
+      });
+
+      socket.on('timeout', () => {
+        finalize('FILTERED', 'Connection timed out (Filtered by firewall or drop)');
+      });
+
+      socket.on('error', (err: any) => {
+        // ECONNREFUSED means target host actively rejected the TCP SYN with an RST packet -> CLOSED
+        // EHOSTUNREACH / ENETUNREACH means host is unreachable / filtered
+        // ETIMEDOUT means dropped -> FILTERED
+        if (err.code === 'ECONNREFUSED') {
+          finalize('CLOSED', 'Connection refused (RST received)');
+        } else if (err.code === 'ETIMEDOUT') {
+          finalize('FILTERED', 'Connection timed out');
+        } else if (err.code === 'EHOSTUNREACH' || err.code === 'ENETUNREACH') {
+          finalize('FILTERED', 'Host/Network unreachable');
+        } else {
+          finalize('CLOSED', err.message || 'Connection failed');
+        }
+      });
+
+      socket.connect(port, targetHost);
+    } catch (err: any) {
       resolve({
         port,
-        status,
-        latencyMs,
+        status: 'CLOSED',
+        latencyMs: 0,
         service: WELL_KNOWN_SERVICES[port] || {
           name: `Port ${port}`,
           description: 'Custom/Unregistered Port',
           protocol: 'TCP',
         },
-        error: errorMsg,
+        error: err.message || 'Failed to initiate socket connection',
       });
-    };
-
-    socket.setTimeout(timeoutMs);
-
-    socket.connect(port, targetHost, () => {
-      finalize('OPEN');
-    });
-
-    socket.on('timeout', () => {
-      finalize('FILTERED', 'Connection timed out (Filtered by firewall or drop)');
-    });
-
-    socket.on('error', (err: any) => {
-      // ECONNREFUSED means target host actively rejected the TCP SYN with an RST packet -> CLOSED
-      // EHOSTUNREACH / ENETUNREACH means host is unreachable / filtered
-      // ETIMEDOUT means dropped -> FILTERED
-      if (err.code === 'ECONNREFUSED') {
-        finalize('CLOSED', 'Connection refused (RST received)');
-      } else if (err.code === 'ETIMEDOUT') {
-        finalize('FILTERED', 'Connection timed out');
-      } else if (err.code === 'EHOSTUNREACH' || err.code === 'ENETUNREACH') {
-        finalize('FILTERED', 'Host/Network unreachable');
-      } else {
-        finalize('CLOSED', err.message || 'Connection failed');
-      }
-    });
+    }
   });
 }
 
 // Endpoint to resolve hostname / check target validity (supports URLs like https://google.com)
 app.post('/api/resolve-target', async (req: Request, res: Response) => {
   try {
-    const { target } = req.body;
+    const { target } = req.body || {};
     if (!target || typeof target !== 'string') {
       return res.status(400).json({ error: 'Please provide a valid host or IP address.' });
     }
@@ -352,7 +372,7 @@ app.post('/api/resolve-target', async (req: Request, res: Response) => {
 // Endpoint to scan a batch of ports with concurrency control
 app.post('/api/scan', async (req: Request, res: Response) => {
   try {
-    const { host, ports, timeout = 1200 } = req.body;
+    const { host, ports, timeout = 1200 } = req.body || {};
 
     if (!host || typeof host !== 'string') {
       return res.status(400).json({ error: 'Target host is required.' });
@@ -378,7 +398,7 @@ app.post('/api/scan', async (req: Request, res: Response) => {
     }
 
     const results: any[] = [];
-    const concurrency = 10;
+    const concurrency = 20;
     const timeoutMs = Math.min(Math.max(Number(timeout) || 1200, 300), 5000);
 
     for (let i = 0; i < cleanPorts.length; i += concurrency) {
@@ -409,8 +429,7 @@ app.get('/api/scan-stream', async (req: Request, res: Response) => {
   const timeoutMs = Math.min(Math.max(parseInt(req.query.timeout as string, 10) || 1000, 300), 4000);
 
   if (!rawHost) {
-    res.status(400).send('Host parameter required');
-    return;
+    return res.status(400).json({ error: 'Host parameter is required.' });
   }
 
   const { cleanHost } = sanitizeTargetHost(rawHost);
@@ -426,8 +445,7 @@ app.get('/api/scan-stream', async (req: Request, res: Response) => {
   ).slice(0, 100);
 
   if (ports.length === 0) {
-    res.status(400).send('Valid ports required');
-    return;
+    return res.status(400).json({ error: 'Valid ports are required.' });
   }
 
   // Cross-browser SSE Headers: Chrome, Safari, Firefox, Edge, Mobile
@@ -449,16 +467,32 @@ app.get('/api/scan-stream', async (req: Request, res: Response) => {
   // Send start event
   res.write(`data: ${JSON.stringify({ type: 'start', host: targetHost, totalPorts: ports.length })}\n\n`);
 
-  for (let i = 0; i < ports.length; i++) {
-    if (isAborted) break;
-    const port = ports[i];
-    const result = await testPort(targetHost, port, timeoutMs);
-    res.write(`data: ${JSON.stringify({ type: 'result', index: i + 1, total: ports.length, result })}\n\n`);
-  }
+  try {
+    for (let i = 0; i < ports.length; i++) {
+      if (isAborted) break;
+      const port = ports[i];
+      const result = await testPort(targetHost, port, timeoutMs);
+      if (isAborted) break;
+      res.write(`data: ${JSON.stringify({ type: 'result', index: i + 1, total: ports.length, result })}\n\n`);
+    }
 
-  if (!isAborted) {
-    res.write(`data: ${JSON.stringify({ type: 'complete', host: targetHost })}\n\n`);
-    res.end();
+    if (!isAborted) {
+      res.write(`data: ${JSON.stringify({ type: 'complete', host: targetHost })}\n\n`);
+      setTimeout(() => {
+        try {
+          if (!res.writableEnded) {
+            res.end();
+          }
+        } catch {
+          // ignore
+        }
+      }, 150);
+    }
+  } catch (err: any) {
+    if (!isAborted && !res.writableEnded) {
+      res.write(`data: ${JSON.stringify({ type: 'error', error: err?.message || 'Streaming error' })}\n\n`);
+      res.end();
+    }
   }
 });
 
@@ -502,6 +536,19 @@ app.get('/api/port-lookup/:port', (req: Request, res: Response) => {
   });
 });
 
+// Explicit API 404 Handler - MUST come before Vite to prevent HTML falling through to JSON fetch calls
+app.all('/api/*', (req: Request, res: Response) => {
+  res.status(404).json({ error: `API endpoint not found: ${req.method} ${req.path}` });
+});
+
+// Global API error handler
+app.use((err: any, req: Request, res: Response, next: any) => {
+  if (req.path.startsWith('/api')) {
+    console.error('API Error handler caught:', err);
+    return res.status(500).json({ error: err?.message || 'Internal server error occurred.' });
+  }
+  next(err);
+});
 
 async function startServer() {
   const isProduction = process.env.NODE_ENV === 'production';
