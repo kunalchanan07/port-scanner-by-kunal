@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Shield, Globe, Code2, ChevronDown, Check, Sparkles, Terminal } from 'lucide-react';
+import { Shield, Globe, Code2, ChevronDown, Check, Terminal } from 'lucide-react';
 import { Language, TRANSLATIONS } from '../data/translations';
 
 interface NavbarProps {
@@ -57,10 +57,6 @@ export const Navbar: React.FC<NavbarProps> = ({
               <span className="text-lg font-black tracking-tight text-slate-950 font-sans sm:text-xl">
                 {t.appName}
               </span>
-              <span className="inline-flex items-center gap-1 rounded-full border border-blue-200 bg-blue-50/80 px-2.5 py-0.5 text-[10px] font-black uppercase tracking-wider text-blue-700">
-                <Sparkles className="h-2.5 w-2.5 text-blue-500" />
-                {t.themeBadge}
-              </span>
             </div>
             <p className="hidden text-xs font-medium text-slate-500 md:block max-w-md truncate">
               {t.appSubtitle}
@@ -73,6 +69,13 @@ export const Navbar: React.FC<NavbarProps> = ({
           {/* Quick Target Chips */}
           <div className="hidden lg:flex items-center gap-1.5 rounded-xl border border-slate-200 bg-slate-50/90 p-1 text-xs text-slate-600">
             <span className="px-2 text-[11px] text-slate-500 font-bold uppercase tracking-wider">{t.quickHosts}</span>
+            <button
+              onClick={() => onSelectTarget('google.com')}
+              className="rounded-lg px-2.5 py-1 font-semibold text-blue-700 hover:bg-white hover:shadow-2xs transition"
+              title="Google Web (HTTP Ports 80 & 443)"
+            >
+              google.com
+            </button>
             <button
               onClick={() => onSelectTarget('scanme.nmap.org')}
               className="rounded-lg px-2.5 py-1 font-semibold text-blue-700 hover:bg-white hover:shadow-2xs transition"

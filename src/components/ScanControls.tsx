@@ -11,13 +11,14 @@ import {
   Hash,
   History,
   X,
-  Trash2
+  Trash2,
+  Globe
 } from 'lucide-react';
 import { Language, TRANSLATIONS } from '../data/translations';
 import { PRESET_BUNDLES } from '../data/portServices';
 
 const STORAGE_KEY = 'port_scanner_recent_targets';
-const DEFAULT_RECENT = ['scanme.nmap.org', '127.0.0.1', '1.1.1.1', '8.8.8.8'];
+const DEFAULT_RECENT = ['google.com', 'scanme.nmap.org', '127.0.0.1', '1.1.1.1', '8.8.8.8'];
 
 interface ScanControlsProps {
   currentLang: Language;
@@ -160,6 +161,12 @@ export const ScanControls: React.FC<ScanControlsProps> = ({
               disabled={isScanning}
               className="w-full rounded-xl border border-blue-200 bg-blue-50/30 px-4 py-3 font-mono text-sm font-medium text-blue-950 placeholder-slate-400 shadow-inner outline-none transition focus:border-blue-600 focus:bg-white focus:ring-3 focus:ring-blue-500/20 disabled:opacity-60"
             />
+          </div>
+
+          {/* Browser / URL Compatibility Hint */}
+          <div className="flex items-center gap-1.5 text-[11px] text-slate-500 leading-tight">
+            <Globe className="h-3.5 w-3.5 text-blue-500 shrink-0" />
+            <span>{t.browserUrlHint}</span>
           </div>
 
           {/* DNS Resolution Info Badge */}

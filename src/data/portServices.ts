@@ -1108,10 +1108,18 @@ export function getPortDetails(port: number) {
 
 export const PRESET_BUNDLES = [
   {
+    id: 'google-http',
+    name: 'Google / Web (80, 443)',
+    namePa: 'ਗੂਗਲ / ਵੈੱਬ (80, 443)',
+    nameHi: 'गूगल / वेब (80, 443)',
+    ports: [80, 443],
+    description: 'HTTP & HTTPS Standard Web Ports (Google, Chrome, Safari)',
+  },
+  {
     id: 'web',
-    name: 'Web (80, 443, 8080)',
-    namePa: 'ਵੈੱਬ (80, 443, 8080)',
-    nameHi: 'वेब (80, 443, 8080)',
+    name: 'Web & Proxies (80, 443, 8080)',
+    namePa: 'ਵੈੱਬ ਅਤੇ ਪ੍ਰੌਕਸੀ (80, 443, 8080)',
+    nameHi: 'वेब और प्रॉक्सी (80, 443, 8080)',
     ports: [80, 443, 8080, 8443, 3000, 8000],
     description: 'HTTP, HTTPS, Proxies, Dev Web Servers',
   },

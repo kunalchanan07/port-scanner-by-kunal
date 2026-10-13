@@ -6,6 +6,7 @@ export interface Translations {
   themeBadge: string;
   targetHostLabel: string;
   targetHostPlaceholder: string;
+  browserUrlHint: string;
   detectMyIp: string;
   resolving: string;
   resolvedTo: string;
@@ -88,7 +89,8 @@ export const TRANSLATIONS: Record<Language, Translations> = {
     appSubtitle: 'Professional TCP Network Diagnostic Suite & Port Scanner',
     themeBadge: 'Professional Edition',
     targetHostLabel: 'Target IP Address or Hostname',
-    targetHostPlaceholder: 'e.g. 192.168.1.1 or scanme.nmap.org',
+    targetHostPlaceholder: 'e.g. google.com, https://google.com, 127.0.0.1, or scanme.nmap.org',
+    browserUrlHint: 'Supports HTTP/HTTPS URLs (e.g. https://google.com), domains (google.com), and IP addresses in Chrome, Safari, & any browser.',
     detectMyIp: 'Detect My IP',
     resolving: 'Resolving DNS...',
     resolvedTo: 'Resolved IP:',
@@ -113,11 +115,11 @@ export const TRANSLATIONS: Record<Language, Translations> = {
     presetTop20: 'Top 20 Ports',
     presetCustomRange: 'Custom Range',
     applyRange: 'Apply',
-    totalPorts: 'Total Ports',
-    openPorts: 'Open Ports',
+    totalPorts: 'Total Ports Scanned',
+    openPorts: 'Open Ports Found',
     closedPorts: 'Closed Ports',
-    filteredPorts: 'Filtered',
-    avgLatency: 'Avg Latency',
+    filteredPorts: 'Filtered Ports',
+    avgLatency: 'Average Latency',
     terminalOutput: 'Live Terminal Console (Python Style)',
     resultsView: 'Scan Results & Service Analysis',
     splitView: 'Split View',
@@ -168,7 +170,8 @@ export const TRANSLATIONS: Record<Language, Translations> = {
     appSubtitle: 'ਪ੍ਰੋਫੈਸ਼ਨਲ TCP ਨੈੱਟਵਰਕ ਡਾਇਗਨੋਸਟਿਕ ਸੂਟ ਅਤੇ ਪੋਰਟ ਸਕੈਨਰ',
     themeBadge: 'ਪ੍ਰੋਫੈਸ਼ਨਲ ਐਡੀਸ਼ਨ',
     targetHostLabel: 'ਆਈਪੀ (IP) ਐਡਰੈੱਸ ਪਾਓ',
-    targetHostPlaceholder: 'ਉਦਾਹਰਣ: 192.168.1.1 ਜਾਂ scanme.nmap.org',
+    targetHostPlaceholder: 'ਉਦਾਹਰਣ: google.com, https://google.com, 127.0.0.1 ਜਾਂ scanme.nmap.org',
+    browserUrlHint: 'ਕ੍ਰੋਮ, ਸਫਾਰੀ ਜਾਂ ਕਿਸੇ ਵੀ ਬ੍ਰਾਊਜ਼ਰ ਤੋਂ HTTP/HTTPS ਯੂਆਰਐਲ (ਜਿਵੇਂ https://google.com), ਡੋਮੇਨ (google.com) ਅਤੇ IP ਐਡਰੈੱਸ ਸਪੋਰਟ।',
     detectMyIp: 'ਮੇਰਾ ਆਈਪੀ ਪਤਾ ਕਰੋ',
     resolving: 'ਜਾਂਚ ਹੋ ਰਹੀ ਹੈ...',
     resolvedTo: 'ਹੱਲ ਕੀਤਾ ਆਈਪੀ:',
@@ -248,7 +251,8 @@ export const TRANSLATIONS: Record<Language, Translations> = {
     appSubtitle: 'प्रोफेशनल TCP नेटवर्क डायग्नोस्टिक सुइट और पोर्ट स्कैनर',
     themeBadge: 'प्रोफेशनल एडिशन',
     targetHostLabel: 'टारगेट IP एड्रेस या होस्टनेम',
-    targetHostPlaceholder: 'उदा: 192.168.1.1 या scanme.nmap.org',
+    targetHostPlaceholder: 'उदा: google.com, https://google.com, 127.0.0.1 या scanme.nmap.org',
+    browserUrlHint: 'Chrome, Safari या किसी भी ब्राउज़र से HTTP/HTTPS URL (जैसे https://google.com), डोमेन (google.com) और IP एड्रेस सपोर्ट।',
     detectMyIp: 'मेरा IP पता करें',
     resolving: 'DNS जांच हो रही है...',
     resolvedTo: 'सत्यापित IP:',

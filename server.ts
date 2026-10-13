@@ -102,9 +102,166 @@ const WELL_KNOWN_SERVICES: Record<number, { name: string; description: string; p
   50000: { name: 'SAP', description: 'SAP NetWeaver Dispatcher', protocol: 'TCP', category: 'system' },
 };
 
+// Helper: Intelligently clean and extract domain/IP from user input or browser URLs
+// Handles inputs like "https://google.com", "http://google.com/", "www.google.com", "google.com:443", "http://localhost:3000"
+function sanitizeTargetHost(input: string): { cleanHost: string; detectedPort?: number; original: string } {
+  const original = (input || '').trim();
+  if (!original) {
+    return { cleanHost: '', original: '' };
+  }
+
+  let cleaned = original;
+
+  // Handle browser protocol prefix: https://, http://, ftp://, ws://, wss://, etc.
+  if (/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(cleaned)) {
+    try {
+      const parsed = new URL(cleaned);
+      const cleanHost = parsed.hostname.replace(/^\[|\]$/g, '').toLowerCase();
+      const detectedPort = parsed.port ? parseInt(parsed.port, 10) : undefined;
+      return { cleanHost, detectedPort, original };
+    } catch {
+      cleaned = cleaned.replace(/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//, '');
+    }
+  }
+
+  // Handle leading slashes like //google.com
+  cleaned = cleaned.replace(/^\/\//, '');
+
+  // Strip path (e.g. google.com/search?q=1 -> google.com)
+  const slashIdx = cleaned.indexOf('/');
+  if (slashIdx !== -1) {
+    cleaned = cleaned.slice(0, slashIdx);
+  }
+
+  // Strip query and hash
+  cleaned = cleaned.split('?')[0].split('#')[0].trim();
+
+  // Handle host:port notation (e.g. google.com:443 or localhost:3000 or 127.0.0.1:8080)
+  let detectedPort: number | undefined;
+  if (/^[^:]+:\d+$/.test(cleaned)) {
+    const parts = cleaned.split(':');
+    cleaned = parts[0];
+    const p = parseInt(parts[1], 10);
+    if (!isNaN(p) && p >= 1 && p <= 65535) {
+      detectedPort = p;
+    }
+  }
+
+  // Strip IPv6 brackets if any
+  cleaned = cleaned.replace(/^\[|\]$/g, '').trim().toLowerCase();
+
+  return { cleanHost: cleaned, detectedPort, original };
+}
+
+// Resolver: Resolves hostname, Google domains, local hosts, and IPs
+async function resolveTargetAddress(targetInput: string): Promise<{
+  valid: boolean;
+  cleanHost: string;
+  ip: string;
+  allIps: string[];
+  version: 'IPv4' | 'IPv6';
+  detectedPort?: number;
+  error?: string;
+}> {
+  const { cleanHost, detectedPort } = sanitizeTargetHost(targetInput);
+
+  if (!cleanHost) {
+    return {
+      valid: false,
+      cleanHost: '',
+      ip: '',
+      allIps: [],
+      version: 'IPv4',
+      error: 'Please provide a valid target IP, domain, or URL (e.g., google.com, 127.0.0.1, or https://google.com).',
+    };
+  }
+
+  // Check if directly an IP
+  const isIP = net.isIP(cleanHost);
+  if (isIP !== 0) {
+    return {
+      valid: true,
+      cleanHost,
+      ip: cleanHost,
+      allIps: [cleanHost],
+      version: isIP === 4 ? 'IPv4' : 'IPv6',
+      detectedPort,
+    };
+  }
+
+  // Special handle localhost
+  if (cleanHost === 'localhost') {
+    return {
+      valid: true,
+      cleanHost: 'localhost',
+      ip: '127.0.0.1',
+      allIps: ['127.0.0.1', '::1'],
+      version: 'IPv4',
+      detectedPort,
+    };
+  }
+
+  // Use dns.lookup (OS getaddrinfo - exactly matching Python socket behavior)
+  try {
+    const lookupResults = await dns.lookup(cleanHost, { all: true });
+    if (lookupResults && lookupResults.length > 0) {
+      const ipv4Match = lookupResults.find((r) => r.family === 4);
+      const chosen = ipv4Match || lookupResults[0];
+      return {
+        valid: true,
+        cleanHost,
+        ip: chosen.address,
+        allIps: lookupResults.map((r) => r.address),
+        version: chosen.family === 4 ? 'IPv4' : 'IPv6',
+        detectedPort,
+      };
+    }
+  } catch {
+    // Fallback to resolve4 and resolve6
+    try {
+      const addresses4 = await dns.resolve4(cleanHost);
+      if (addresses4 && addresses4.length > 0) {
+        return {
+          valid: true,
+          cleanHost,
+          ip: addresses4[0],
+          allIps: addresses4,
+          version: 'IPv4',
+          detectedPort,
+        };
+      }
+    } catch {
+      try {
+        const addresses6 = await dns.resolve6(cleanHost);
+        if (addresses6 && addresses6.length > 0) {
+          return {
+            valid: true,
+            cleanHost,
+            ip: addresses6[0],
+            allIps: addresses6,
+            version: 'IPv6',
+            detectedPort,
+          };
+        }
+      } catch {
+        // Failed
+      }
+    }
+  }
+
+  return {
+    valid: false,
+    cleanHost,
+    ip: '',
+    allIps: [],
+    version: 'IPv4',
+    error: `Could not resolve domain or host: "${cleanHost}". Please verify the URL or hostname.`,
+  };
+}
+
 // Helper: Scan a single TCP port using real node:net Socket
 // Exactly reproduces Python's socket.socket(socket.AF_INET, socket.SOCK_STREAM) + connect_ex
-function testPort(host: string, port: number, timeoutMs = 1200): Promise<{
+function testPort(rawHost: string, port: number, timeoutMs = 1200): Promise<{
   port: number;
   status: 'OPEN' | 'CLOSED' | 'FILTERED';
   latencyMs: number;
@@ -112,6 +269,8 @@ function testPort(host: string, port: number, timeoutMs = 1200): Promise<{
   error?: string;
 }> {
   return new Promise((resolve) => {
+    const { cleanHost } = sanitizeTargetHost(rawHost);
+    const targetHost = cleanHost || rawHost;
     const startTime = Date.now();
     const socket = new net.Socket();
     let hasResolved = false;
@@ -136,7 +295,7 @@ function testPort(host: string, port: number, timeoutMs = 1200): Promise<{
 
     socket.setTimeout(timeoutMs);
 
-    socket.connect(port, host, () => {
+    socket.connect(port, targetHost, () => {
       finalize('OPEN');
     });
 
@@ -161,7 +320,7 @@ function testPort(host: string, port: number, timeoutMs = 1200): Promise<{
   });
 }
 
-// Endpoint to resolve hostname / check target validity
+// Endpoint to resolve hostname / check target validity (supports URLs like https://google.com)
 app.post('/api/resolve-target', async (req: Request, res: Response) => {
   try {
     const { target } = req.body;
@@ -169,46 +328,22 @@ app.post('/api/resolve-target', async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'Please provide a valid host or IP address.' });
     }
 
-    const trimmed = target.trim();
-
-    // Check if valid IP
-    const isIP = net.isIP(trimmed);
-    if (isIP !== 0) {
+    const resolution = await resolveTargetAddress(target);
+    if (resolution.valid) {
       return res.json({
         valid: true,
-        ip: trimmed,
-        version: isIP === 4 ? 'IPv4' : 'IPv6',
-        host: trimmed,
+        host: resolution.cleanHost,
+        ip: resolution.ip,
+        allIps: resolution.allIps,
+        version: resolution.version,
+        detectedPort: resolution.detectedPort,
       });
     }
 
-    // Try resolving domain via DNS
-    try {
-      const addresses = await dns.resolve4(trimmed);
-      return res.json({
-        valid: true,
-        ip: addresses[0],
-        allIps: addresses,
-        version: 'IPv4',
-        host: trimmed,
-      });
-    } catch {
-      try {
-        const addresses6 = await dns.resolve6(trimmed);
-        return res.json({
-          valid: true,
-          ip: addresses6[0],
-          allIps: addresses6,
-          version: 'IPv6',
-          host: trimmed,
-        });
-      } catch (err: any) {
-        return res.status(400).json({
-          valid: false,
-          error: `Invalid hostname or could not resolve DNS: ${trimmed}`,
-        });
-      }
-    }
+    return res.status(400).json({
+      valid: false,
+      error: resolution.error || `Invalid hostname or could not resolve DNS: ${target}`,
+    });
   } catch (err: any) {
     res.status(500).json({ error: err.message || 'DNS Resolution failed' });
   }
@@ -223,6 +358,9 @@ app.post('/api/scan', async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'Target host is required.' });
     }
 
+    const { cleanHost } = sanitizeTargetHost(host);
+    const targetHost = cleanHost || host;
+
     if (!Array.isArray(ports) || ports.length === 0) {
       return res.status(400).json({ error: 'At least one port must be provided.' });
     }
@@ -233,13 +371,12 @@ app.post('/api/scan', async (req: Request, res: Response) => {
           .map((p) => parseInt(p, 10))
           .filter((p) => !isNaN(p) && p >= 1 && p <= 65535)
       )
-    ).slice(0, 100); // limit to 100 ports per batch to prevent denial of service
+    ).slice(0, 100);
 
     if (cleanPorts.length === 0) {
       return res.status(400).json({ error: 'Ports must be valid numbers between 1 and 65535.' });
     }
 
-    // Run scans with small concurrency pool (max 10 parallel connections)
     const results: any[] = [];
     const concurrency = 10;
     const timeoutMs = Math.min(Math.max(Number(timeout) || 1200, 300), 5000);
@@ -247,13 +384,13 @@ app.post('/api/scan', async (req: Request, res: Response) => {
     for (let i = 0; i < cleanPorts.length; i += concurrency) {
       const slice = cleanPorts.slice(i, i + concurrency);
       const batchResults = await Promise.all(
-        slice.map((p) => testPort(host, p, timeoutMs))
+        slice.map((p) => testPort(targetHost, p, timeoutMs))
       );
       results.push(...batchResults);
     }
 
     res.json({
-      host,
+      host: targetHost,
       scannedCount: results.length,
       openCount: results.filter((r) => r.status === 'OPEN').length,
       closedCount: results.filter((r) => r.status === 'CLOSED').length,
@@ -265,16 +402,19 @@ app.post('/api/scan', async (req: Request, res: Response) => {
   }
 });
 
-// SSE Streaming scan for live terminal & live UI updates
+// SSE Streaming scan for live terminal & live UI updates (fully compatible with Chrome, Safari, Firefox, Edge, Mobile)
 app.get('/api/scan-stream', async (req: Request, res: Response) => {
-  const host = (req.query.host as string)?.trim();
+  const rawHost = (req.query.host as string)?.trim();
   const portsParam = req.query.ports as string;
   const timeoutMs = Math.min(Math.max(parseInt(req.query.timeout as string, 10) || 1000, 300), 4000);
 
-  if (!host) {
+  if (!rawHost) {
     res.status(400).send('Host parameter required');
     return;
   }
+
+  const { cleanHost } = sanitizeTargetHost(rawHost);
+  const targetHost = cleanHost || rawHost;
 
   const rawPorts = portsParam ? portsParam.split(',') : ['80', '443'];
   const ports = Array.from(
@@ -290,11 +430,16 @@ app.get('/api/scan-stream', async (req: Request, res: Response) => {
     return;
   }
 
-  // Set SSE Headers
-  res.setHeader('Content-Type', 'text/event-stream');
-  res.setHeader('Cache-Control', 'no-cache');
+  // Cross-browser SSE Headers: Chrome, Safari, Firefox, Edge, Mobile
+  res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+  res.setHeader('Cache-Control', 'no-cache, no-transform');
   res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no');
+  res.setHeader('Access-Control-Allow-Origin', '*');
   res.flushHeaders?.();
+
+  // Send initial comment byte to force Safari & Chrome to immediately flush the stream buffer
+  res.write(': keep-alive\n\n');
 
   let isAborted = false;
   req.on('close', () => {
@@ -302,17 +447,17 @@ app.get('/api/scan-stream', async (req: Request, res: Response) => {
   });
 
   // Send start event
-  res.write(`data: ${JSON.stringify({ type: 'start', host, totalPorts: ports.length })}\n\n`);
+  res.write(`data: ${JSON.stringify({ type: 'start', host: targetHost, totalPorts: ports.length })}\n\n`);
 
   for (let i = 0; i < ports.length; i++) {
     if (isAborted) break;
     const port = ports[i];
-    const result = await testPort(host, port, timeoutMs);
+    const result = await testPort(targetHost, port, timeoutMs);
     res.write(`data: ${JSON.stringify({ type: 'result', index: i + 1, total: ports.length, result })}\n\n`);
   }
 
   if (!isAborted) {
-    res.write(`data: ${JSON.stringify({ type: 'complete', host })}\n\n`);
+    res.write(`data: ${JSON.stringify({ type: 'complete', host: targetHost })}\n\n`);
     res.end();
   }
 });

@@ -124,64 +124,6 @@ export const ResultsTable: React.FC<ResultsTableProps> = ({
 
   return (
     <div className="space-y-4">
-      {/* Metric Cards Row in Professional Slate & Blue */}
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 sm:gap-4">
-        {/* Total Ports */}
-        <div className="rounded-2xl border border-slate-200/90 bg-white p-4 shadow-xs transition hover:shadow-sm">
-          <div className="flex items-center justify-between text-slate-700">
-            <span className="text-xs font-bold uppercase tracking-wider text-slate-500">{t.totalPorts}</span>
-            <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-blue-50 text-blue-600">
-              <Layers className="h-4 w-4" />
-            </div>
-          </div>
-          <p className="mt-2 text-2xl font-black font-mono text-slate-900">
-            {results.length}
-          </p>
-        </div>
-
-        {/* Open Ports */}
-        <div className="rounded-2xl border border-emerald-200 bg-emerald-50/50 p-4 shadow-xs transition hover:shadow-sm">
-          <div className="flex items-center justify-between text-emerald-800">
-            <span className="text-xs font-bold uppercase tracking-wider">{t.openPorts}</span>
-            <span className="relative flex h-3 w-3">
-              {openCount > 0 && (
-                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-500 opacity-75"></span>
-              )}
-              <span className="relative inline-flex h-3 w-3 rounded-full bg-emerald-600"></span>
-            </span>
-          </div>
-          <p className="mt-2 text-2xl font-black font-mono text-emerald-700">
-            {openCount}
-          </p>
-        </div>
-
-        {/* Closed Ports */}
-        <div className="rounded-2xl border border-slate-200/90 bg-white p-4 shadow-xs transition hover:shadow-sm">
-          <div className="flex items-center justify-between text-slate-700">
-            <span className="text-xs font-bold uppercase tracking-wider text-slate-500">{t.closedPorts}</span>
-            <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-rose-50 text-rose-600">
-              <XCircle className="h-4 w-4" />
-            </div>
-          </div>
-          <p className="mt-2 text-2xl font-black font-mono text-slate-800">
-            {closedCount} {filteredCount > 0 && <span className="text-xs text-amber-600 font-normal">({filteredCount} filtered)</span>}
-          </p>
-        </div>
-
-        {/* Avg Latency */}
-        <div className="rounded-2xl border border-slate-200/90 bg-white p-4 shadow-xs transition hover:shadow-sm">
-          <div className="flex items-center justify-between text-slate-700">
-            <span className="text-xs font-bold uppercase tracking-wider text-slate-500">{t.avgLatency}</span>
-            <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-indigo-50 text-indigo-600">
-              <Activity className="h-4 w-4" />
-            </div>
-          </div>
-          <p className="mt-2 text-2xl font-black font-mono text-slate-900">
-            {avgLatency} <span className="text-xs font-medium text-slate-500">ms</span>
-          </p>
-        </div>
-      </div>
-
       {/* Main Results Table in Professional White & Slate */}
       <div className="rounded-2xl border border-slate-200/90 bg-white shadow-xs overflow-hidden">
         {/* Table Toolbar */}

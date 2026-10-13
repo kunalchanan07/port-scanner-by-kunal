@@ -1,6 +1,7 @@
 import React, { useState, useRef } from 'react';
 import { Navbar } from './components/Navbar';
 import { ScanControls } from './components/ScanControls';
+import { SummaryStatsCards } from './components/SummaryStatsCards';
 import { ResultsTable, ScanResultItem } from './components/ResultsTable';
 import { TerminalView, TerminalLog } from './components/TerminalView';
 import { PythonScriptModal } from './components/PythonScriptModal';
@@ -129,7 +130,9 @@ export function App() {
       'info'
     );
 
-    // Resolve DNS / Validate IP
+    let targetToScan = host.trim();
+
+    // Resolve DNS / Validate IP (supports URLs like https://google.com, http://..., google.com)
     try {
       const resolveRes = await fetch('/api/resolve-target', {
         method: 'POST',
@@ -139,15 +142,26 @@ export function App() {
       const resolveData = await resolveRes.json();
       if (resolveData.valid) {
         setResolvedIpInfo(resolveData);
+        targetToScan = resolveData.host || targetToScan;
         addLog(
           currentLang === 'pa'
-            ? `IP ਹੱਲ ਕੀਤਾ ਗਿਆ: ${resolveData.ip} (${resolveData.version})`
-            : `DNS resolved target to: ${resolveData.ip} (${resolveData.version})`,
+            ? `ਟਾਰਗਿਟ ਹੱਲ: ${resolveData.host} -> ${resolveData.ip} (${resolveData.version})`
+            : `Target resolved: ${resolveData.host} -> ${resolveData.ip} (${resolveData.version})`,
           'info'
         );
+        // If a port was detected in the URL (e.g. http://localhost:3000), auto-include it
+        if (resolveData.detectedPort && !cleanPorts.includes(resolveData.detectedPort)) {
+          cleanPorts.push(resolveData.detectedPort);
+          addLog(
+            `[Auto-detect] Added port ${resolveData.detectedPort} from URL`,
+            'info'
+          );
+        }
       } else {
         setErrorMessage(resolveData.error || t.invalidHost);
         addLog(`[Error] ${resolveData.error || 'Failed to resolve host'}`, 'error');
+        setIsScanning(false);
+        return;
       }
     } catch {
       addLog(
@@ -160,15 +174,15 @@ export function App() {
 
     addLog(
       currentLang === 'pa'
-        ? `\nਸਕੈਨਿੰਗ ਸ਼ੁਰੂ ਹੋ ਰਹੀ ਹੈ ${host}...\n`
-        : `\nScanning ${host}...\n`,
+        ? `\nਸਕੈਨਿੰਗ ਸ਼ੁਰੂ ਹੋ ਰਹੀ ਹੈ: ${targetToScan}...\n`
+        : `\nScanning target: ${targetToScan}...\n`,
       'info',
       false
     );
 
     const timeoutMs = Math.round(timeoutSec * 1000);
     const sseUrl = `/api/scan-stream?host=${encodeURIComponent(
-      host
+      targetToScan
     )}&ports=${encodeURIComponent(cleanPorts.join(','))}&timeout=${timeoutMs}`;
 
     if (sseRef.current) {
@@ -230,7 +244,7 @@ export function App() {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-              host,
+              host: targetToScan,
               ports: cleanPorts,
               timeout: timeoutMs,
             }),
@@ -373,6 +387,13 @@ export function App() {
           isDetectingIp={isDetectingIp}
           resolvedIpInfo={resolvedIpInfo}
           errorMessage={errorMessage}
+        />
+
+        {/* Summary Stats Cards Component (Instant Scan Overview) */}
+        <SummaryStatsCards
+          currentLang={currentLang}
+          results={results}
+          isScanning={isScanning}
         />
 
         {/* View Layout Switcher */}
