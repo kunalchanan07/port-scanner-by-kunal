@@ -448,10 +448,48 @@ app.use((_req: Request, res: Response, next) => {
   next();
 });
 
+// Local sliding window rate limiter
+const ipRequestHistory = new Map<string, number[]>();
+let activeConcurrentScans = 0;
+
+function checkLocalRateLimit(req: Request, res: Response, maxRequests = 25, windowSec = 60, checkConcurrency = false): boolean {
+  const ip = String(req.headers['x-forwarded-for'] || req.socket.remoteAddress || '127.0.0.1').split(',')[0].trim();
+  const now = Date.now();
+  const cutoff = now - (windowSec * 1000);
+  
+  let timestamps = ipRequestHistory.get(ip) || [];
+  timestamps = timestamps.filter((t) => t > cutoff);
+  
+  if (timestamps.length >= maxRequests) {
+    const oldest = timestamps[0];
+    const retryAfter = Math.max(1, Math.ceil((windowSec * 1000 - (now - oldest)) / 1000));
+    res.status(429).set('Retry-After', String(retryAfter)).json({
+      error: `Rate limit exceeded: Maximum ${maxRequests} requests per ${windowSec}s. Please wait ${retryAfter} seconds.`,
+      detail: 'Rate limit exceeded',
+      retryAfter,
+    });
+    return false;
+  }
+
+  if (checkConcurrency && activeConcurrentScans >= 3) {
+    res.status(429).set('Retry-After', '2').json({
+      error: 'Concurrent scan limit reached. Please wait for the active scan to complete before starting another.',
+      detail: 'Too many concurrent requests',
+      retryAfter: 2,
+    });
+    return false;
+  }
+
+  timestamps.push(now);
+  ipRequestHistory.set(ip, timestamps);
+  return true;
+}
+
 // Endpoint to resolve hostname / check target validity (supports both GET & POST, URLs, Python socket resolver)
 app.all(
   ['/api/resolve-target', '/api/resolve-target/', '/api/resolve', '/api/resolve/'],
   async (req: Request, res: Response) => {
+    if (!checkLocalRateLimit(req, res, 40, 60)) return;
     try {
       const target =
         req.body?.target ||
@@ -513,6 +551,8 @@ app.all(
 app.all(
   ['/api/scan', '/api/scan/', '/api/port-scan', '/api/port-scan/', '/api/ports', '/api/ports/'],
   async (req: Request, res: Response) => {
+    if (!checkLocalRateLimit(req, res, 25, 60, true)) return;
+    activeConcurrentScans++;
     try {
       const host = req.body?.host || req.query?.host || 'localhost';
       const rawPorts =
@@ -589,6 +629,8 @@ app.all(
         results: [],
         error: err?.message || 'Scan execution completed with fallback',
       });
+    } finally {
+      activeConcurrentScans = Math.max(0, activeConcurrentScans - 1);
     }
   }
 );

@@ -208,6 +208,44 @@ export const ScanControls: React.FC<ScanControlsProps> = ({
             className="w-full rounded-xl border border-blue-200 dark:border-slate-700 bg-blue-50/30 dark:bg-slate-950 px-4 py-3 font-mono text-sm font-medium text-blue-950 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500 shadow-inner outline-none transition focus:border-blue-600 focus:bg-white dark:focus:bg-slate-900 focus:ring-3 focus:ring-blue-500/20 disabled:opacity-60"
           />
 
+          {/* Quick Select Dropdown (Requirement 6) */}
+          <div className="flex items-center gap-2 pt-0.5">
+            <label htmlFor="quick-select-dropdown" className="text-[11px] font-semibold text-slate-500 dark:text-slate-400 shrink-0">
+              Quick Select:
+            </label>
+            <select
+              id="quick-select-dropdown"
+              disabled={isScanning}
+              value=""
+              onChange={(e) => {
+                const val = e.target.value;
+                if (!val) return;
+                if (val === 'web') {
+                  setPortsInput('80, 443');
+                } else if (val === 'database') {
+                  setPortsInput('3306, 5432');
+                } else if (val === 'full-common') {
+                  setPortsInput('1-1024');
+                } else if (val === 'top20') {
+                  setPortsInput('21, 22, 23, 25, 53, 80, 110, 135, 139, 143, 443, 445, 993, 995, 1433, 3306, 3389, 5432, 8080, 8443');
+                } else if (val === 'server') {
+                  setPortsInput('21, 22, 23, 25, 53, 80, 110, 143, 443, 3389');
+                } else if (val === 'mail') {
+                  setPortsInput('25, 110, 143, 465, 587, 993, 995');
+                }
+              }}
+              className="flex-1 rounded-lg border border-blue-200 dark:border-slate-700 bg-blue-50/50 dark:bg-slate-950 px-2.5 py-1 text-xs font-medium text-slate-800 dark:text-slate-200 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 disabled:opacity-50 cursor-pointer"
+            >
+              <option value="" disabled>-- Select preset (Web, Database, Full Common) --</option>
+              <option value="web">Web (80, 443)</option>
+              <option value="database">Database (3306, 5432)</option>
+              <option value="full-common">Full Common (1-1024)</option>
+              <option value="top20">Top 20 Common</option>
+              <option value="server">Server Core (21, 22, 25, 53, 80, 443)</option>
+              <option value="mail">Mail (25, 110, 143, 587, 993)</option>
+            </select>
+          </div>
+
           {/* Quick Presets in Blue & White */}
           <div className="flex flex-wrap items-center gap-1.5 pt-1">
             <span className="text-[11px] font-semibold text-slate-500 dark:text-slate-400">{t.quickPresets}:</span>

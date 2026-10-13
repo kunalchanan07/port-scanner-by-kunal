@@ -78,7 +78,159 @@ export function getApiEndpoint(path: string): string {
   return BACKEND_URL ? `${BACKEND_URL}${normalizedPath}` : normalizedPath;
 }
 
-// Safe API caller using fetch() that validates JSON, handles timeouts, and gives clear diagnostic errors
+// Client-side Target IP / Hostname Validation
+export function validateTarget(inputHost: string): { valid: boolean; error?: string; cleanTarget: string } {
+  const raw = (inputHost || '').trim();
+  if (!raw) {
+    return { valid: false, error: 'Please enter a target host or IP address.', cleanTarget: '' };
+  }
+
+  const { cleanHost } = cleanClientTarget(raw);
+  const lower = cleanHost.toLowerCase();
+
+  // Localhost / Loopback is always valid
+  if (lower === 'localhost' || lower === '127.0.0.1' || lower === '::1') {
+    return { valid: true, cleanTarget: lower };
+  }
+
+  // IPv4 Address Validation
+  const ipv4Regex = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/;
+  const ipMatch = lower.match(ipv4Regex);
+  if (ipMatch) {
+    const octets = [
+      parseInt(ipMatch[1], 10),
+      parseInt(ipMatch[2], 10),
+      parseInt(ipMatch[3], 10),
+      parseInt(ipMatch[4], 10),
+    ];
+
+    for (const oct of octets) {
+      if (oct < 0 || oct > 255) {
+        return {
+          valid: false,
+          error: `Invalid IPv4 address '${cleanHost}': Octet values must be between 0 and 255.`,
+          cleanTarget: cleanHost,
+        };
+      }
+    }
+
+    // Check private subnets (RFC 1918)
+    const [first, second] = octets;
+    const isPrivate =
+      first === 10 ||
+      (first === 172 && second >= 16 && second <= 31) ||
+      (first === 192 && second === 168) ||
+      (first === 169 && second === 254);
+
+    if (isPrivate) {
+      return {
+        valid: false,
+        error: `Scanning internal private IP (${cleanHost}) is restricted to prevent unauthorized network intrusion. Please scan localhost (127.0.0.1), scanme.nmap.org, or a public IP.`,
+        cleanTarget: cleanHost,
+      };
+    }
+
+    return { valid: true, cleanTarget: cleanHost };
+  }
+
+  // IPv6 Validation
+  if (lower.includes(':')) {
+    if (!/^[0-9a-fA-F:]+$/.test(lower)) {
+      return {
+        valid: false,
+        error: `Invalid IPv6 address format: '${cleanHost}' contains invalid hexadecimal characters.`,
+        cleanTarget: cleanHost,
+      };
+    }
+    return { valid: true, cleanTarget: cleanHost };
+  }
+
+  // Domain Name Validation (RFC 1123)
+  const domainRegex = /^(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$/;
+  if (!domainRegex.test(lower)) {
+    return {
+      valid: false,
+      error: `Invalid hostname '${cleanHost}'. Please enter a valid domain name (e.g., scanme.nmap.org) or IP address (e.g., 127.0.0.1).`,
+      cleanTarget: cleanHost,
+    };
+  }
+
+  return { valid: true, cleanTarget: cleanHost };
+}
+
+// Client-side Port List Validation supporting single ports and ranges (e.g., 80, 443, 1-1024)
+export function validatePorts(portsInputStr: string): {
+  valid: boolean;
+  ports: number[];
+  error?: string;
+  isTruncated?: boolean;
+} {
+  const raw = (portsInputStr || '').trim();
+  if (!raw) {
+    return { valid: false, ports: [], error: 'Please enter at least one port number (1-65535).' };
+  }
+
+  const tokens = raw.split(',').map((t) => t.trim()).filter(Boolean);
+  const validPorts: number[] = [];
+  const invalidTokens: string[] = [];
+
+  for (const tok of tokens) {
+    // Support range format like "1-1024" or "80-90"
+    if (tok.includes('-')) {
+      const parts = tok.split('-').map((p) => p.trim());
+      if (parts.length === 2 && /^\d+$/.test(parts[0]) && /^\d+$/.test(parts[1])) {
+        const start = parseInt(parts[0], 10);
+        const end = parseInt(parts[1], 10);
+        if (start >= 1 && end <= 65535 && start <= end) {
+          // If range is large (like 1-1024), cap expansion to prevent memory/browser freeze
+          const rangeCount = Math.min(end - start + 1, 100);
+          for (let p = 0; p < rangeCount; p++) {
+            validPorts.push(start + p);
+          }
+          continue;
+        }
+      }
+      invalidTokens.push(tok);
+      continue;
+    }
+
+    if (!/^\d+$/.test(tok)) {
+      invalidTokens.push(tok);
+      continue;
+    }
+    const p = parseInt(tok, 10);
+    if (p < 1 || p > 65535) {
+      invalidTokens.push(tok);
+    } else {
+      validPorts.push(p);
+    }
+  }
+
+  if (invalidTokens.length > 0) {
+    return {
+      valid: false,
+      ports: [],
+      error: `Invalid port or range [${invalidTokens.join(', ')}]. Port numbers must be positive integers between 1 and 65535 (e.g. 80, 443 or 80-90).`,
+    };
+  }
+
+  const unique = Array.from(new Set(validPorts));
+  if (unique.length === 0) {
+    return {
+      valid: false,
+      ports: [],
+      error: 'No valid port numbers found. Please specify ports between 1 and 65535 (e.g., 80, 443).',
+    };
+  }
+
+  return {
+    valid: true,
+    ports: unique.slice(0, 100),
+    isTruncated: unique.length > 100,
+  };
+}
+
+// Safe API caller using fetch() with response status checks, content-type verification, and rate-limit handling
 async function safeApiPost<T = any>(
   endpointPath: string,
   body: any,
@@ -96,9 +248,10 @@ async function safeApiPost<T = any>(
       signal,
     });
 
+    const status = res.status;
     const contentType = (res.headers.get('content-type') || '').toLowerCase();
 
-    // Validate JSON response to prevent interpreting Netlify's HTML error/index page as API data
+    // 1. Strict Content-Type inspection before attempting JSON parsing
     if (!contentType.includes('application/json')) {
       const responseText = await res.text().catch(() => '');
       const isHtmlResponse =
@@ -110,38 +263,110 @@ async function safeApiPost<T = any>(
 
       let errorMsg: string;
       if (isHtmlResponse) {
-        errorMsg = `Netlify returned an HTML page instead of API JSON response (${res.status} ${res.statusText || 'OK'}). The endpoint ${fullUrl} was intercepted by Netlify's static SPA router. Verify that the Python FastAPI backend is live at ${BACKEND_URL} and that Netlify has VITE_API_BASE_URL configured in Site configuration -> Environment variables.`;
+        if (status === 502 || status === 503 || status === 504) {
+          errorMsg = `Backend Gateway Unavailable (${status} ${res.statusText || 'Waking Up'}). Your Render FastAPI service is spinning up from cold sleep (takes ~30-50s on free tier). Please wait 30 seconds and retry.`;
+        } else {
+          errorMsg = `Netlify returned an HTML page instead of API JSON response (${status} ${res.statusText || 'OK'}). The endpoint ${fullUrl} was intercepted by Netlify's Single-Page App redirect. Verify that the Python FastAPI backend is live at ${BACKEND_URL} and that Netlify has VITE_API_BASE_URL configured in Site configuration -> Environment variables.`;
+        }
       } else {
-        errorMsg = `Server at ${fullUrl} returned non-JSON data (${res.status} ${res.statusText || 'OK'}, Content-Type: ${contentType || 'unknown'}).`;
+        errorMsg = `Server at ${fullUrl} returned non-JSON data (${status} ${res.statusText || 'OK'}, Content-Type: ${contentType || 'unknown'}).`;
       }
 
       return {
         ok: false,
-        status: res.status,
+        status,
         error: errorMsg,
       };
     }
 
-    const data = await res.json();
-    if (!res.ok) {
+    // 2. Safe JSON parsing
+    let data: any;
+    try {
+      data = await res.json();
+    } catch (parseErr) {
       return {
         ok: false,
-        status: res.status,
-        error: data.error || data.detail || `Server returned error (${res.status})`,
+        status,
+        error: `Failed to parse backend JSON response (${status}): ${parseErr instanceof Error ? parseErr.message : 'Invalid JSON'}`,
       };
     }
 
-    return { ok: true, status: res.status, data };
+    // 3. HTTP status checks
+    if (!res.ok) {
+      // Rate Limiting (HTTP 429)
+      if (status === 429) {
+        const retryAfter = res.headers.get('retry-after') || data?.retryAfter || 'a few';
+        const rateLimitMsg =
+          data?.error ||
+          data?.detail ||
+          `Rate limit exceeded (HTTP 429): Too many scan requests. Please wait ${retryAfter} seconds before trying again.`;
+        return {
+          ok: false,
+          status,
+          error: rateLimitMsg,
+        };
+      }
+
+      // Authorization / Forbidden (HTTP 403)
+      if (status === 403) {
+        return {
+          ok: false,
+          status,
+          error: data?.error || data?.detail || 'Forbidden (HTTP 403): Scanning this target is not authorized.',
+        };
+      }
+
+      // Endpoint Not Found (HTTP 404)
+      if (status === 404) {
+        return {
+          ok: false,
+          status,
+          error: data?.error || `API endpoint not found (HTTP 404 at ${fullUrl}). Verify backend routes.`,
+        };
+      }
+
+      // Backend Server Errors (HTTP 500+)
+      if (status >= 500) {
+        return {
+          ok: false,
+          status,
+          error: data?.error || data?.detail || `FastAPI backend error (HTTP ${status}). Check Render backend logs.`,
+        };
+      }
+
+      return {
+        ok: false,
+        status,
+        error: data?.error || data?.detail || `Server returned error (${status})`,
+      };
+    }
+
+    return { ok: true, status, data };
   } catch (err: any) {
     if (err.name === 'AbortError') {
       return {
         ok: false,
-        error: 'Scan was stopped or request timed out.',
+        error: 'Scan was stopped by user or request timed out.',
       };
     }
+
+    // CORS & Network connection errors
+    const isNetworkError =
+      err instanceof TypeError &&
+      (err?.message?.includes('Failed to fetch') ||
+        err?.message?.includes('NetworkError') ||
+        err?.message?.includes('Load failed'));
+
+    if (isNetworkError) {
+      return {
+        ok: false,
+        error: `Could not connect to Python backend at ${BACKEND_URL}. Check if the Render service is online, CORS is allowed, and no browser extension is blocking cross-origin requests.`,
+      };
+    }
+
     return {
       ok: false,
-      error: `Could not reach Python backend at ${BACKEND_URL}: ${err?.message || 'Network connection failed'}. If the Render backend was inactive, it may take ~30-50s to wake up on the first request.`,
+      error: `Could not reach Python backend at ${BACKEND_URL}: ${err?.message || 'Network connection failed'}. If the Render backend was sleeping, please wait ~30s for it to wake up.`,
     };
   }
 }
@@ -222,11 +447,13 @@ export function App() {
     setIsDetectingIp(true);
     setErrorMessage(null);
     try {
-      const res = await fetch(getApiEndpoint('/api/my-ip'));
-      const contentType = res.headers.get('content-type') || '';
-      if (contentType.includes('application/json')) {
+      const res = await fetch(getApiEndpoint('/api/my-ip'), {
+        headers: { Accept: 'application/json' },
+      });
+      const contentType = (res.headers.get('content-type') || '').toLowerCase();
+      if (res.ok && contentType.includes('application/json')) {
         const data = await res.json();
-        if (data.ip) {
+        if (data && data.ip) {
           setHost(data.ip);
           addLog(
             currentLang === 'pa'
@@ -237,6 +464,11 @@ export function App() {
           return;
         }
       }
+
+      if (res.status === 429) {
+        addLog('Client IP rate limited (HTTP 429). Using 127.0.0.1', 'filtered');
+      }
+
       setHost('127.0.0.1');
     } catch {
       setHost('127.0.0.1');
@@ -253,28 +485,34 @@ export function App() {
 
   // Start Scanning Execution via fetch() (Requirement 6, 7 & 8)
   const handleStartScan = async () => {
-    if (!host.trim()) {
-      setErrorMessage(t.invalidHost);
+    setErrorMessage(null);
+
+    // 1. Pre-flight Target IP / Hostname Validation
+    const targetValidation = validateTarget(host);
+    if (!targetValidation.valid) {
+      const err = targetValidation.error || t.invalidHost;
+      setErrorMessage(err);
+      addLog(`[Target Validation] ${err}`, 'error');
       return;
     }
 
-    setErrorMessage(null);
+    // 2. Pre-flight Port Numbers Validation
+    const portsValidation = validatePorts(portsInput);
+    if (!portsValidation.valid) {
+      const err = portsValidation.error || 'Please enter valid ports between 1 and 65535.';
+      setErrorMessage(err);
+      addLog(`[Port Validation] ${err}`, 'error');
+      return;
+    }
+
+    const cleanPorts = [...portsValidation.ports];
+    if (portsValidation.isTruncated) {
+      addLog('[Port Range] Range contains over 100 ports. Scanning the first 100 ports to prevent network flooding.', 'info');
+    }
+
     setIsScanning(true);
     isScanFinishedRef.current = false;
     resultsCountRef.current = 0;
-
-    const rawPorts = portsInput
-      .split(',')
-      .map((p) => parseInt(p.trim(), 10))
-      .filter((p) => !isNaN(p) && p >= 1 && p <= 65535);
-
-    const cleanPorts = Array.from(new Set(rawPorts)).slice(0, 100);
-
-    if (cleanPorts.length === 0) {
-      setErrorMessage(t.invalidHost);
-      setIsScanning(false);
-      return;
-    }
 
     const abortController = new AbortController();
     abortControllerRef.current = abortController;

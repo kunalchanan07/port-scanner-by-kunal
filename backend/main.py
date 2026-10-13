@@ -14,7 +14,11 @@ import sys
 import time
 import errno
 import socket
+import inspect
 import ipaddress
+import threading
+from functools import wraps
+from collections import defaultdict, deque
 from typing import List, Optional
 from urllib.parse import urlparse
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -23,6 +27,191 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
+
+# Thread-safe in-memory sliding window rate limiter with target concurrency protection
+class InMemoryRateLimiter:
+    """
+    Protects:
+    1. Maximum requests per time window per client IP (sliding window).
+    2. Maximum concurrent in-flight scans per client IP.
+    3. Maximum concurrent scans per target host to prevent flooding scan destinations.
+    """
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._history = defaultdict(deque)  # client_ip -> deque of timestamps
+        self._active_concurrency = defaultdict(int)  # key -> active count
+
+    def check_rate_limit(self, client_ip: str, max_requests: int, window_seconds: float) -> tuple[bool, int, int]:
+        now = time.time()
+        with self._lock:
+            q = self._history[client_ip]
+            cutoff = now - window_seconds
+            while q and q[0] <= cutoff:
+                q.popleft()
+
+            if len(q) < max_requests:
+                q.append(now)
+                remaining = max_requests - len(q)
+                return True, remaining, 0
+            else:
+                retry_after = max(1, int(window_seconds - (now - q[0])))
+                return False, 0, retry_after
+
+    def acquire_concurrency(self, key: str, max_concurrent: int) -> bool:
+        with self._lock:
+            if self._active_concurrency[key] >= max_concurrent:
+                return False
+            self._active_concurrency[key] += 1
+            return True
+
+    def release_concurrency(self, key: str):
+        with self._lock:
+            if self._active_concurrency[key] > 0:
+                self._active_concurrency[key] -= 1
+
+
+GLOBAL_RATE_LIMITER = InMemoryRateLimiter()
+
+
+def rate_limit(
+    max_requests: int = 30,
+    window_seconds: float = 60.0,
+    max_concurrent: Optional[int] = None,
+    protect_target: bool = False,
+    max_target_concurrent: int = 2,
+):
+    """
+    Rate limiting & concurrency decorator for FastAPI route handlers.
+    - Enforces sliding window request rate limit per client IP.
+    - Limits concurrent scans per client IP.
+    - Protects destination targets from excessive concurrent TCP probes.
+    - Returns HTTP 429 Too Many Requests with Retry-After and rate limit headers.
+    """
+    def decorator(func):
+        is_async = inspect.iscoroutinefunction(func)
+
+        def _process_limits(args, kwargs):
+            req: Optional[Request] = kwargs.get("req") or kwargs.get("request")
+            if not req:
+                for arg in args:
+                    if isinstance(arg, Request):
+                        req = arg
+                        break
+
+            client_ip = "127.0.0.1"
+            if req:
+                fwd = req.headers.get("x-forwarded-for")
+                if fwd:
+                    client_ip = fwd.split(",")[0].strip()
+                elif req.client and req.client.host:
+                    client_ip = req.client.host
+                if client_ip.startswith("::ffff:"):
+                    client_ip = client_ip[7:]
+
+            # 1. Enforce sliding window request rate limit
+            allowed, remaining, retry_after = GLOBAL_RATE_LIMITER.check_rate_limit(
+                client_ip=client_ip,
+                max_requests=max_requests,
+                window_seconds=window_seconds,
+            )
+
+            if not allowed:
+                return False, JSONResponse(
+                    status_code=429,
+                    headers={
+                        "Retry-After": str(retry_after),
+                        "X-RateLimit-Limit": str(max_requests),
+                        "X-RateLimit-Remaining": "0",
+                        "X-RateLimit-Reset": str(retry_after),
+                    },
+                    content={
+                        "error": f"Rate limit exceeded: Maximum {max_requests} requests per {int(window_seconds)}s. Please retry after {retry_after} seconds.",
+                        "detail": "Rate limit exceeded",
+                        "retryAfter": retry_after,
+                        "limit": max_requests,
+                        "windowSeconds": window_seconds,
+                    },
+                ), None, None
+
+            # 2. Enforce client concurrency limit if configured
+            client_concurrency_key = f"client:{client_ip}"
+            if max_concurrent is not None:
+                acquired_client = GLOBAL_RATE_LIMITER.acquire_concurrency(client_concurrency_key, max_concurrent)
+                if not acquired_client:
+                    return False, JSONResponse(
+                        status_code=429,
+                        headers={"Retry-After": "3"},
+                        content={
+                            "error": f"Concurrent scan limit reached ({max_concurrent} active scans). Please wait for your in-flight scan to finish before starting another.",
+                            "detail": "Too many concurrent requests",
+                            "retryAfter": 3,
+                        },
+                    ), None, None
+            else:
+                client_concurrency_key = None
+
+            # 3. Enforce target-specific concurrency limit to protect destination hosts
+            target_concurrency_key = None
+            if protect_target:
+                body_obj = kwargs.get("body")
+                target_val = None
+                if body_obj:
+                    target_val = getattr(body_obj, "host", None) or getattr(body_obj, "target", None)
+                if not target_val and req:
+                    target_val = req.query_params.get("host") or req.query_params.get("target")
+
+                if target_val:
+                    cleaned_target = str(target_val).strip().lower().split(":")[0].strip("[]")
+                    if cleaned_target:
+                        target_concurrency_key = f"target:{cleaned_target}"
+                        acquired_target = GLOBAL_RATE_LIMITER.acquire_concurrency(target_concurrency_key, max_target_concurrent)
+                        if not acquired_target:
+                            if client_concurrency_key:
+                                GLOBAL_RATE_LIMITER.release_concurrency(client_concurrency_key)
+                            return False, JSONResponse(
+                                status_code=429,
+                                headers={"Retry-After": "5"},
+                                content={
+                                    "error": f"Target protection: Target host '{cleaned_target}' is currently receiving active scan probes. Please wait a few seconds before initiating another scan against this target.",
+                                    "detail": "Target concurrent scan limit reached",
+                                    "retryAfter": 5,
+                                },
+                            ), None, None
+
+            return True, None, client_concurrency_key, target_concurrency_key
+
+        if is_async:
+            @wraps(func)
+            async def async_wrapper(*args, **kwargs):
+                allowed, err_resp, c_key, t_key = _process_limits(args, kwargs)
+                if not allowed:
+                    return err_resp
+                try:
+                    return await func(*args, **kwargs)
+                finally:
+                    if t_key:
+                        GLOBAL_RATE_LIMITER.release_concurrency(t_key)
+                    if c_key:
+                        GLOBAL_RATE_LIMITER.release_concurrency(c_key)
+            async_wrapper.__signature__ = inspect.signature(func)
+            return async_wrapper
+        else:
+            @wraps(func)
+            def sync_wrapper(*args, **kwargs):
+                allowed, err_resp, c_key, t_key = _process_limits(args, kwargs)
+                if not allowed:
+                    return err_resp
+                try:
+                    return func(*args, **kwargs)
+                finally:
+                    if t_key:
+                        GLOBAL_RATE_LIMITER.release_concurrency(t_key)
+                    if c_key:
+                        GLOBAL_RATE_LIMITER.release_concurrency(c_key)
+            sync_wrapper.__signature__ = inspect.signature(func)
+            return sync_wrapper
+
+    return decorator
 
 app = FastAPI(
     title="Port Scanner by Kunal - API",
@@ -259,6 +448,7 @@ def health():
 
 
 @app.api_route("/api/resolve-target", methods=["GET", "POST"])
+@rate_limit(max_requests=40, window_seconds=60.0)
 def resolve_target_endpoint(req: Request, body: Optional[ResolveRequest] = None):
     raw_target = None
     if body:
@@ -311,6 +501,7 @@ def resolve_target_endpoint(req: Request, body: Optional[ResolveRequest] = None)
 
 
 @app.api_route("/api/scan", methods=["GET", "POST"])
+@rate_limit(max_requests=25, window_seconds=60.0, max_concurrent=2, protect_target=True, max_target_concurrent=2)
 def scan_endpoint(req: Request, body: Optional[ScanRequest] = None):
     raw_host = None
     raw_ports = None
@@ -406,6 +597,7 @@ def scan_endpoint(req: Request, body: Optional[ScanRequest] = None):
 
 
 @app.get("/api/my-ip")
+@rate_limit(max_requests=60, window_seconds=60.0)
 def my_ip(req: Request):
     f = req.headers.get("x-forwarded-for")
     ip = f.split(",")[0].strip() if f else req.client.host or "127.0.0.1"
