@@ -1,11 +1,11 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Shield, Globe, Code2, ChevronDown, Check, Sun, Moon } from 'lucide-react';
+import { Shield, Globe, ChevronDown, Check, Sun, Moon } from 'lucide-react';
 import { Language, TRANSLATIONS } from '../data/translations';
 
 interface NavbarProps {
   currentLang: Language;
   onLanguageChange: (lang: Language) => void;
-  onOpenPythonModal: () => void;
+  onOpenPythonModal?: () => void;
   onSelectTarget: (host: string) => void;
   isDarkMode: boolean;
   onToggleDarkMode: () => void;
@@ -118,15 +118,6 @@ export const Navbar: React.FC<NavbarProps> = ({
             <span className="hidden sm:inline text-xs font-bold">
               {isDarkMode ? t.themeToggleLight : t.themeToggleDark}
             </span>
-          </button>
-
-          {/* Python Code Modal Trigger */}
-          <button
-            onClick={onOpenPythonModal}
-            className="flex items-center gap-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-3.5 py-2 text-xs font-bold text-slate-800 dark:text-slate-200 shadow-2xs transition hover:border-blue-400 dark:hover:border-blue-500 hover:bg-blue-50/50 dark:hover:bg-slate-750 hover:text-blue-700 dark:hover:text-blue-400"
-          >
-            <Code2 className="h-4 w-4 text-blue-600 dark:text-blue-400" />
-            <span className="hidden md:inline">{t.pythonScriptTab}</span>
           </button>
 
           {/* Language Dropdown */}
